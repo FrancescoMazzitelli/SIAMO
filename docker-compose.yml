@@ -1,0 +1,104 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - OLLAMA_MAX_LOADED_MODELS=2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  dots-ocr:
+    build:
+      context: .
+      dockerfile: Dockerfile.dots-ocr
+    ports:
+      - "8100:8000"
+    volumes:
+      - dots_ocr_models:/app/hf_cache
+      - dots_ocr_output:/tmp/dots_ocr_output
+    environment:
+      - DOTS_HOST=0.0.0.0
+      - DOTS_PORT=8000
+      - HF_HOME=/app/hf_cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
+
+  ollama-setup:
+    image: curlimages/curl:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+        echo 'Pulling nomic-embed-text...' &&
+        curl -s http://ollama:11434/api/pull -d '{\"name\": \"nomic-embed-text\"}' &&
+        echo 'Pulling qwen2.5:0.5b...' &&
+        curl -s http://ollama:11434/api/pull -d '{\"name\": \"qwen2.5:0.5b\"}' &&
+        echo 'Models ready.'
+      "
+
+  diagnosis-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION_NAME: medical_knowledge
+      EMBEDDING_MODEL: nomic-embed-text
+      LLM_MODEL: qwen2.5:0.5b
+      EMBEDDING_DIMENSION: 768
+      DOTS_OCR_PROTOCOL: http
+      DOTS_OCR_HOST: dots-ocr
+      DOTS_OCR_PORT: 8000
+      DOTS_OCR_MODEL_NAME: dots.mocr
+      DOTS_OCR_MODE: hf
+      DOTS_OCR_OUTPUT_DIR: /tmp/dots_ocr_output
+    depends_on:
+      ollama:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      dots-ocr:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - dots_ocr_output:/tmp/dots_ocr_output
+
+volumes:
+  ollama_data:
+  qdrant_data:
+  dots_ocr_models:
+  dots_ocr_output:

@@ -1,0 +1,28 @@
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    build-essential \
+    libmupdf-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir \
+    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+RUN pip install --no-cache-dir \
+    transformers \
+    accelerate \
+    qwen-vl-utils \
+    Pillow \
+    pymupdf \
+    fastapi \
+    uvicorn \
+    python-multipart
+
+COPY dots_ocr_server.py .
+
+EXPOSE 8000
+
+CMD ["python", "dots_ocr_server.py"]
