@@ -2,11 +2,11 @@ import uuid
 from langchain_core.documents import Document
 import structlog
 
-from src.graph.nodes import GraphNodes
-from src.services.vector_store import VectorStoreService
-from src.services.llm_service import LLMService
-from src.services.document_processor import DocumentProcessor
-from src.services.hierarchical_retriever import HierarchicalRetriever
+from src.application.workflow.nodes import GraphNodes
+from src.rag.vector_store import VectorStoreService
+from src.llm.llm_service import LLMService
+from src.documents.document_processor import DocumentProcessor
+from src.rag.hierarchical_retriever import HierarchicalRetriever
 from src.core.models.gcs import GCSQuestionnaire
 from src.core.models.diagnosis import DiagnosisResult, RetrievedDocument
 from src.prompts.italy import GCS_QUESTIONS
@@ -16,6 +16,9 @@ logger = structlog.get_logger()
 
 
 class RAGDiagnosisService:
+    """Application logic: orchestrates sessions, document ingestion and the
+    GCS questionnaire -> RAG -> diagnosis flow."""
+
     def __init__(self):
         self.settings = get_settings()
         self.vector_store = VectorStoreService()

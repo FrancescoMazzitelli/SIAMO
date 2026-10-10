@@ -1,8 +1,8 @@
 from langgraph.graph import StateGraph, END
-from src.graph.state import GraphState
-from src.graph.nodes import GraphNodes
-from src.services.vector_store import VectorStoreService
-from src.services.llm_service import LLMService
+from src.application.workflow.state import GraphState
+from src.application.workflow.nodes import GraphNodes
+from src.rag.vector_store import VectorStoreService
+from src.llm.llm_service import LLMService
 
 
 def build_graph(vector_store: VectorStoreService, llm: LLMService):

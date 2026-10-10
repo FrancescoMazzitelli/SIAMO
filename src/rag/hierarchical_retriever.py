@@ -10,6 +10,8 @@ logger = structlog.get_logger()
 
 
 class HierarchicalRetriever:
+    """Search hits on chunks, then recovers the full parent paragraphs."""
+
     def __init__(self):
         self.settings = get_settings()
         self.embeddings = OllamaEmbeddings(
@@ -125,6 +127,7 @@ class HierarchicalRetriever:
                 "paragraph_id": para_id,
                 "doc_id": doc_id,
                 "doc_summary": doc_summary,
+                "page": para.payload.get("page", 0),
                 "source": doc_id,
                 "retrieval_score": best_score,
             }

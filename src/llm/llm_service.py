@@ -9,6 +9,8 @@ logger = structlog.get_logger()
 
 
 class LLMService:
+    """Wrapper around the Ollama text-generation LLM (gemma3:1b)."""
+
     def __init__(self):
         self.settings = get_settings()
         self.llm = ChatOllama(

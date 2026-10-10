@@ -12,6 +12,8 @@ logger = structlog.get_logger()
 
 
 class VectorStoreService:
+    """Indexes the 3-level hierarchy (document summary / paragraph / chunk) in Qdrant."""
+
     def __init__(self):
         self.settings = get_settings()
         self.embeddings = OllamaEmbeddings(
@@ -67,6 +69,7 @@ class VectorStoreService:
                 "doc_id": doc.doc_id,
                 "paragraph_id": paragraph.paragraph_id,
                 "paragraph_index": paragraph.paragraph_index,
+                "page": paragraph.page_index,
                 "doc_summary": doc.summary,
                 "level": "paragraph",
             }
@@ -86,6 +89,7 @@ class VectorStoreService:
                     "paragraph_id": paragraph.paragraph_id,
                     "chunk_id": chunk.chunk_id,
                     "chunk_index": chunk.chunk_index,
+                    "page": paragraph.page_index,
                     "doc_summary": doc.summary,
                     "level": "chunk",
                 }

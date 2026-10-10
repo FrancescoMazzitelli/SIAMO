@@ -13,12 +13,14 @@ services:
               count: 1
               capabilities: [gpu]
     environment:
-      - OLLAMA_MAX_LOADED_MODELS=2
+      - OLLAMA_MAX_LOADED_MODELS=3
+      - OLLAMA_KEEP_ALIVE=30m
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      test: ["CMD", "ollama", "list"]
       interval: 15s
       timeout: 10s
       retries: 10
+      start_period: 30s
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -30,30 +32,11 @@ services:
     environment:
       QDRANT__SERVICE__GRPC_PORT: 6334
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333'"]
       interval: 10s
       timeout: 5s
-      retries: 5
-
-  dots-ocr:
-    build:
-      context: .
-      dockerfile: Dockerfile.dots-ocr
-    ports:
-      - "8100:8000"
-    volumes:
-      - dots_ocr_models:/app/hf_cache
-      - dots_ocr_output:/tmp/dots_ocr_output
-    environment:
-      - DOTS_HOST=0.0.0.0
-      - DOTS_PORT=8000
-      - HF_HOME=/app/hf_cache
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
       retries: 10
-      start_period: 300s
+      start_period: 20s
 
   ollama-setup:
     image: curlimages/curl:latest
@@ -62,43 +45,60 @@ services:
         condition: service_healthy
     entrypoint: >
       sh -c "
-        echo 'Pulling nomic-embed-text...' &&
+        echo 'Pulling nomic-embed-text (embeddings)...' &&
         curl -s http://ollama:11434/api/pull -d '{\"name\": \"nomic-embed-text\"}' &&
-        echo 'Pulling qwen2.5:0.5b...' &&
-        curl -s http://ollama:11434/api/pull -d '{\"name\": \"qwen2.5:0.5b\"}' &&
+        echo 'Pulling gemma3:1b (text generation)...' &&
+        curl -s http://ollama:11434/api/pull -d '{\"name\": \"gemma3:1b\"}' &&
+        echo 'Pulling maternion/LightOnOCR-2:1b (OCR vision model, ~1.5GB)...' &&
+        curl -s http://ollama:11434/api/pull -d '{\"name\": \"maternion/LightOnOCR-2:1b\"}' &&
         echo 'Models ready.'
       "
 
   diagnosis-api:
     build: .
     ports:
-      - "8000:8000"
+      - "8080:8000"
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
       QDRANT_URL: http://qdrant:6333
       QDRANT_COLLECTION_NAME: medical_knowledge
       EMBEDDING_MODEL: nomic-embed-text
-      LLM_MODEL: qwen2.5:0.5b
+      LLM_MODEL: gemma3:1b
       EMBEDDING_DIMENSION: 768
-      DOTS_OCR_PROTOCOL: http
-      DOTS_OCR_HOST: dots-ocr
-      DOTS_OCR_PORT: 8000
-      DOTS_OCR_MODEL_NAME: dots.mocr
-      DOTS_OCR_MODE: hf
-      DOTS_OCR_OUTPUT_DIR: /tmp/dots_ocr_output
+      OCR_MODEL: maternion/LightOnOCR-2:1b
+      OCR_TEMPERATURE: 0.1
+      OCR_MAX_TOKENS: 8192
+      OCR_MAX_LONGEST_EDGE: 1540
+      MIN_PARAGRAPH_CHARS: 80
     depends_on:
       ollama:
         condition: service_healthy
       qdrant:
         condition: service_healthy
-      dots-ocr:
-        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     volumes:
       - .:/app
-      - dots_ocr_output:/tmp/dots_ocr_output
+
+  streamlit-gui:
+    build:
+      context: .
+      dockerfile: gui/Dockerfile
+    ports:
+      - "8501:8501"
+    environment:
+      SIAMO_API_URL: http://diagnosis-api:8000
+    depends_on:
+      diagnosis-api:
+        condition: service_healthy
+    volumes:
+      - ./gui:/app
+    restart: unless-stopped
 
 volumes:
   ollama_data:
   qdrant_data:
-  dots_ocr_models:
-  dots_ocr_output:

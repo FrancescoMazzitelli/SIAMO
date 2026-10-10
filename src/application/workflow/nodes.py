@@ -1,13 +1,13 @@
-from src.graph.state import GraphState
+from src.application.workflow.state import GraphState
 from src.prompts.italy import (
     GCS_QUESTIONS,
     RAG_QUERY_BUILDER_PROMPT,
     DIAGNOSIS_PROMPT,
     CONFIDENCE_CALIBRATION_PROMPT,
 )
-from src.services.vector_store import VectorStoreService
-from src.services.llm_service import LLMService
-from src.services.hierarchical_retriever import HierarchicalRetriever
+from src.rag.vector_store import VectorStoreService
+from src.llm.llm_service import LLMService
+from src.rag.hierarchical_retriever import HierarchicalRetriever
 import structlog
 
 logger = structlog.get_logger()

@@ -20,6 +20,7 @@ class HierarchicalMetadata(BaseModel):
     paragraph_index: int = 0
     chunk_index: int = 0
     total_chunks_in_paragraph: int = 0
+    page_index: int = 0
 
 
 class ProcessedChunk(BaseModel):
@@ -37,6 +38,7 @@ class ProcessedParagraph(BaseModel):
     chunks: list[ProcessedChunk] = Field(default_factory=list)
     doc_id: str
     paragraph_index: int
+    page_index: int = 0
 
 
 class ProcessedDocument(BaseModel):

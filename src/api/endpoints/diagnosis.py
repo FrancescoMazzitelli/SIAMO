@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 
-from src.services.rag_service import RAGDiagnosisService
+from src.application.rag_service import RAGDiagnosisService
 
 router = APIRouter(prefix="/api/v1/diagnosis", tags=["diagnosis"])
 
