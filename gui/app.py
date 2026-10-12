@@ -1,6 +1,6 @@
 """Streamlit GUI for the SIAMO system (RAG diagnosis with the Glasgow Coma Scale).
 
-Talks to the diagnosis-api REST endpoints (docker container).
+Chat-style interface over the diagnosis-api REST endpoints (docker container).
 The user-facing text of this app is Italian by design.
 """
 
@@ -18,117 +18,140 @@ st.set_page_config(page_title="SIAMO · Diagnosi GCS RAG", layout="wide")
 _CSS = """
 <style>
 .stApp {
-    background: #f4f7fb;
+    background: linear-gradient(180deg, #f6f9fc 0%, #eef3f9 100%);
 }
 
 /* header */
 .app-header {
-    background: linear-gradient(135deg, #0e7490 0%, #155e75 100%);
+    background: radial-gradient(120% 150% at 0% 0%, #0ea5e9 0%, #0e7490 45%, #0f766e 100%);
     color: #ffffff;
-    padding: 1.1rem 1.6rem;
-    border-radius: 14px;
-    margin-bottom: 0.4rem;
-    box-shadow: 0 4px 14px rgba(14, 116, 144, 0.18);
+    padding: 1.5rem 1.9rem;
+    border-radius: 20px;
+    margin-bottom: 0.5rem;
+    box-shadow: 0 16px 38px rgba(13, 74, 110, 0.22);
 }
-.app-header h1 { color: #ffffff; margin: 0; font-size: 1.7rem; font-weight: 700; }
-.app-header p  { color: #cffafe; margin: 0.25rem 0 0; font-size: 0.92rem; }
+.app-header h1 { color: #ffffff; margin: 0; font-size: 1.8rem; font-weight: 800; letter-spacing: -0.01em; }
+.app-header p  { color: rgba(255, 255, 255, 0.88); margin: 0.4rem 0 0; font-size: 0.95rem; max-width: 62ch; }
 
 /* stepper */
-.steps { display: flex; gap: 0.5rem; margin: 1rem 0 1.2rem; }
+.steps { display: flex; gap: 0.55rem; margin: 1.1rem 0 1.4rem; }
 .step {
-    flex: 1; text-align: center; padding: 0.42rem 0.5rem;
-    border-radius: 999px; font-size: 0.8rem; font-weight: 600;
-    color: #64748b; background: #e2e8f0;
+    flex: 1; text-align: center; padding: 0.52rem 0.5rem;
+    border-radius: 12px; font-size: 0.82rem; font-weight: 600;
+    color: #64748b; background: #eef2f7; border: 1px solid #e6edf5;
 }
-.step.done   { background: #059669; color: #ffffff; }
-.step.active { background: #2563eb; color: #ffffff; }
+.step.done   { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+.step.active { background: #0e7490; color: #ffffff; border-color: #0e7490; box-shadow: 0 8px 18px rgba(14, 116, 144, 0.28); }
 
-/* sezioni card */
-.card {
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    padding: 1rem 1.25rem;
-    margin-bottom: 1rem;
-    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+/* chat */
+.msg-row { display: flex; gap: 0.6rem; margin: 0.55rem 0; align-items: flex-start; }
+.msg-row.user { justify-content: flex-end; }
+.bubble {
+    max-width: 78%; padding: 0.72rem 0.98rem; border-radius: 16px;
+    font-size: 0.95rem; line-height: 1.55;
 }
-.card h3 { margin: 0 0 0.25rem; font-size: 1.02rem; color: #0f172a; }
-.card .hint { font-size: 0.82rem; color: #64748b; margin-bottom: 0.75rem; }
+.bubble.assistant {
+    background: #ffffff; border: 1px solid #e6edf5; color: #0f172a;
+    border-top-left-radius: 6px; box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
+}
+.bubble.user {
+    background: linear-gradient(135deg, #0e7490, #0f766e); color: #ffffff;
+    border-top-right-radius: 6px; box-shadow: 0 8px 18px rgba(14, 116, 144, 0.26);
+}
+.avatar {
+    width: 32px; height: 32px; border-radius: 50%; flex: 0 0 32px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.7rem; font-weight: 700;
+}
+.avatar.ai   { background: #e0f2fe; color: #0369a1; }
+.avatar.user { background: #0e7490; color: #ffffff; }
+
+/* report */
+.report-title {
+    font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.12em;
+    color: #0e7490; font-weight: 700; margin-bottom: 0.65rem;
+}
 
 /* metriche */
 .metric-card {
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    padding: 0.9rem 1.1rem;
-    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
-    text-align: center;
+    background: #ffffff; border: 1px solid #e6edf5; border-radius: 16px;
+    padding: 0.95rem 1.1rem; box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05);
+    text-align: center; height: 100%;
 }
-.metric-card .label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; }
-.metric-card .value { font-size: 1.45rem; font-weight: 700; color: #0f172a; margin-top: 0.15rem; }
-.metric-card .sub   { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
+.metric-card .label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; font-weight: 700; }
+.metric-card .value { font-size: 1.5rem; font-weight: 800; color: #0f172a; margin-top: 0.2rem; }
+.metric-card .sub   { font-size: 0.78rem; color: #94a3b8; margin-top: 0.2rem; }
 
 /* barra confidenza */
-.conf-track { height: 8px; background: #e2e8f0; border-radius: 999px; margin-top: 0.5rem; overflow: hidden; }
-.conf-fill  { height: 100%; background: #2563eb; border-radius: 999px; }
+.conf-track { height: 8px; background: #eef2f7; border-radius: 999px; margin-top: 0.55rem; overflow: hidden; }
+.conf-fill  { height: 100%; border-radius: 999px; }
 
 /* badge gravita */
-.badge { display: inline-block; padding: 0.18rem 0.7rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
-.b-grave     { background: #fee2e2; color: #b91c1c; }
-.b-moderato  { background: #ffedd5; color: #c2410c; }
-.b-lieve     { background: #dcfce7; color: #15803d; }
-.b-unknown   { background: #e2e8f0; color: #475569; }
+.badge { display: inline-block; padding: 0.2rem 0.72rem; border-radius: 999px; font-size: 0.78rem; font-weight: 700; }
+.b-grave     { background: #fef2f2; color: #b91c1c; }
+.b-moderato  { background: #fff7ed; color: #c2410c; }
+.b-lieve     { background: #ecfdf5; color: #047857; }
+.b-unknown   { background: #eef2f7; color: #475569; }
 
 /* box diagnostico */
 .diag-box {
-    background: #eff6ff;
-    border: 1px solid #bfdbfe;
-    border-left: 4px solid #2563eb;
-    border-radius: 10px;
-    padding: 0.9rem 1.1rem;
-    margin-top: 0.5rem;
+    background: linear-gradient(180deg, #f8fbff, #eef6ff);
+    border: 1px solid #dbeafe; border-left: 4px solid #0ea5e9;
+    border-radius: 14px; padding: 1rem 1.15rem; margin-top: 0.55rem;
 }
 
 /* raccomandazioni */
-.rec-list { list-style: none; padding-left: 0; margin: 0.25rem 0 0; }
+.rec-list { list-style: none; padding-left: 0; margin: 0.35rem 0 0; }
 .rec-list li {
-    background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px;
-    padding: 0.55rem 0.85rem; margin-bottom: 0.45rem; font-size: 0.92rem;
+    background: #ffffff; border: 1px solid #e6edf5; border-left: 3px solid #14b8a6;
+    border-radius: 12px; padding: 0.6rem 0.9rem; margin-bottom: 0.5rem;
+    font-size: 0.92rem; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
 }
 
 /* documenti recuperati */
 .doc-card {
-    background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px;
-    padding: 0.7rem 1rem; margin-bottom: 0.6rem; font-size: 0.88rem;
+    background: #ffffff; border: 1px solid #e6edf5; border-radius: 12px;
+    padding: 0.75rem 1rem; margin-bottom: 0.6rem; font-size: 0.88rem;
 }
-.doc-card .doc-meta { font-size: 0.78rem; color: #64748b; margin-bottom: 0.35rem; }
-.doc-card .doc-body { color: #334155; }
+.doc-card .doc-meta { font-size: 0.76rem; color: #64748b; margin-bottom: 0.35rem; }
+.doc-card .doc-body { color: #334155; line-height: 1.5; }
 
 /* pulsanti */
-.stButton > button { border-radius: 10px; font-weight: 600; }
-.stButton > button[kind="primary"] { background: #2563eb; }
+.stButton > button {
+    border-radius: 12px; font-weight: 600; border: 1px solid #dbe4ee;
+    transition: all 0.15s ease;
+}
+.stButton > button:hover { border-color: #0e7490; color: #0e7490; transform: translateY(-1px); }
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #0e7490, #0f766e); border: none;
+    box-shadow: 0 10px 20px rgba(14, 116, 144, 0.26);
+}
+.stButton > button[kind="primary"]:hover { color: #ffffff; filter: brightness(1.06); }
 
 /* input */
+[data-testid="stChatInput"] { border-radius: 14px; }
 .stTextArea textarea, .stTextInput input { border-radius: 10px; }
-
-/* radio */
-div[role="radiogroup"] label {
-    background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px;
-    padding: 0.45rem 0.9rem; margin-bottom: 0.35rem;
-}
 
 /* sidebar */
 .side-brand {
-    font-size: 1.5rem; font-weight: 800; color: #0e7490; letter-spacing: 0.02em;
+    font-size: 1.7rem; font-weight: 800; letter-spacing: 0.01em;
+    background: linear-gradient(135deg, #0e7490, #0f766e);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
 }
 .side-session {
-    background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px;
-    padding: 0.6rem 0.8rem; font-size: 0.82rem;
+    background: #ffffff; border: 1px solid #e6edf5; border-radius: 14px;
+    padding: 0.7rem 0.9rem; font-size: 0.82rem;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
 }
 </style>
 """
 
 _SEV_BADGES = {"grave": "b-grave", "moderato": "b-moderato", "lieve": "b-lieve", "unknown": "b-unknown"}
+
+
+class SessionExpired(Exception):
+    pass
+
 
 def _init_state():
     st.session_state.setdefault("session_id", None)
@@ -138,7 +161,10 @@ def _init_state():
     st.session_state.setdefault("description_sent", False)
     st.session_state.setdefault("problem_description", "")
     st.session_state.setdefault("result", None)
+    st.session_state.setdefault("messages", [])
     st.session_state.setdefault("last_ingest", None)
+    st.session_state.setdefault("view", "Diagnosi")
+
 
 def _reset_flow():
     st.session_state["session_id"] = None
@@ -147,6 +173,9 @@ def _reset_flow():
     st.session_state["gcs_complete"] = False
     st.session_state["description_sent"] = False
     st.session_state["result"] = None
+    st.session_state["problem_description"] = ""
+    st.session_state["messages"] = []
+
 
 def api_post(path: str, json: dict | None = None, files: dict | None = None) -> dict:
     try:
@@ -163,48 +192,217 @@ def api_post(path: str, json: dict | None = None, files: dict | None = None) -> 
             detail = exc.response.json().get("detail", detail)
         except Exception:
             pass
+        if exc.response is not None and exc.response.status_code == 404:
+            raise SessionExpired()
         status = exc.response.status_code if exc.response is not None else "?"
-        if status == 404:
-            _reset_flow()
-            st.warning("Sessione scaduta: avvia una nuova sessione.")
-        else:
-            st.error(f"Errore API ({status}): {detail}")
+        st.error(f"Errore API ({status}): {detail}")
         st.stop()
 
+
+def _add_message(role: str, text: str, kind: str = "text", meta: dict | None = None):
+    st.session_state["messages"].append(
+        {"role": role, "text": text, "kind": kind, "meta": meta or {}}
+    )
+
+
 def start_session():
-    data = api_post("/start")
-    st.session_state["session_id"] = data["session_id"]
+    data = api_post("/start", json={})
+    st.session_state["session_id"] = data.get("session_id")
     st.session_state["next_question"] = None
     st.session_state["question_index"] = 0
     st.session_state["gcs_complete"] = False
     st.session_state["description_sent"] = False
     st.session_state["result"] = None
+    st.session_state["problem_description"] = ""
+    st.session_state["messages"] = [
+        {
+            "role": "assistant",
+            "text": "Ciao, sono l'assistente SIAMO. Descrivi il problema del paziente: "
+                    "cosa è successo, da quanto tempo e cosa noti adesso.",
+            "kind": "text",
+            "meta": {},
+        }
+    ]
+
+
+def _ensure_session():
+    if not st.session_state["session_id"]:
+        start_session()
+
+
+def _flow_state() -> str:
+    if not st.session_state["description_sent"]:
+        return "description"
+    if not st.session_state["gcs_complete"]:
+        return "gcs"
+    if st.session_state["result"] is None:
+        return "diagnose"
+    if st.session_state["result"].get("needs_followup"):
+        return "followup"
+    return "complete"
+
 
 def _phase_label() -> str:
-    if st.session_state["result"]:
-        return "Completata"
-    if st.session_state["gcs_complete"]:
-        return "Pronta per la diagnosi"
-    if st.session_state["next_question"]:
-        return "Questionario GCS"
-    if st.session_state["description_sent"]:
-        return "Descrizione inviata"
-    return "Non avviata"
+    return {
+        "description": "Descrizione",
+        "gcs": "Questionario GCS",
+        "diagnose": "Pronta per la diagnosi",
+        "followup": "Approfondimento",
+        "complete": "Completata",
+    }[_flow_state()]
+
+
+def _post(path: str, json: dict | None = None) -> dict:
+    _ensure_session()
+    sid = st.session_state["session_id"]
+    return api_post(f"/{sid}{path}", json=json)
+
+
+def _recover_and_notice(action: str):
+    _reset_flow()
+    start_session()
+    _add_message(
+        "assistant",
+        "La sessione era scaduta ed è stata ripristinata. " + action,
+        kind="text",
+        meta={},
+    )
+    st.rerun()
+
+
+def _handle_description(text: str):
+    _ensure_session()
+    sid = st.session_state["session_id"]
+    try:
+        data = api_post(f"/{sid}/description", json={"description": text})
+    except SessionExpired:
+        _reset_flow()
+        start_session()
+        sid = st.session_state["session_id"]
+        try:
+            data = api_post(f"/{sid}/description", json={"description": text})
+        except SessionExpired:
+            _recover_and_notice("Reinvia la descrizione del caso.")
+            return
+
+    _add_message("user", text)
+    st.session_state["problem_description"] = text
+    st.session_state["description_sent"] = True
+    st.session_state["next_question"] = data
+    st.session_state["question_index"] = 1
+    _add_message(
+        "assistant",
+        data.get("question", ""),
+        kind="gcs_question",
+        meta={"options": data.get("options", {})},
+    )
+    st.rerun()
+
+
+def _handle_answer(value: int):
+    question = st.session_state["next_question"] or {}
+    label = (question.get("options") or {}).get(value, str(value))
+    try:
+        data = _post("/answer", json={"answer": value})
+    except SessionExpired:
+        _recover_and_notice("Reinvia la descrizione del caso e rispondi di nuovo alle domande.")
+        return
+
+    _add_message("user", label)
+    if data.get("is_complete"):
+        st.session_state["gcs_complete"] = True
+        st.session_state["next_question"] = None
+        _add_message(
+            "assistant",
+            "Questionario Glasgow completato. Premi Esegui diagnosi per la valutazione.",
+            kind="text",
+            meta={},
+        )
+    else:
+        st.session_state["next_question"] = data
+        st.session_state["question_index"] += 1
+        _add_message(
+            "assistant",
+            data.get("question", ""),
+            kind="gcs_question",
+            meta={"options": data.get("options", {})},
+        )
+    st.rerun()
+
+
+def _settled_message(data: dict) -> str:
+    confidence = float(data.get("confidence", 0.0) or 0.0)
+    threshold = float(data.get("confidence_threshold", 0.0) or 0.0)
+    if data.get("stopped"):
+        return "Perfetto, mi fermo qui: questa è la diagnosi consolidata con le informazioni disponibili."
+    if confidence >= threshold:
+        return "La confidenza è sufficiente: questa è la diagnosi consolidata."
+    return "Ho raggiunto il numero massimo di approfondimenti: questa è la diagnosi consolidata."
+
+
+def _append_diagnosis(data: dict):
+    intro = "Ho aggiornato la diagnosi." if data.get("followup_round", 0) > 0 else "Ecco la prima valutazione."
+    _add_message("assistant", intro, kind="diagnosis", meta={"result": data})
+    if data.get("needs_followup"):
+        question = data.get("followup_question") or "Puoi darmi un altro dettaglio osservando il paziente?"
+        _add_message("assistant", question, kind="text", meta={})
+    else:
+        _add_message("assistant", _settled_message(data), kind="text", meta={})
+
+
+def _handle_diagnose():
+    _add_message("user", "Esegui la diagnosi.", kind="text", meta={})
+    try:
+        data = _post("/diagnose")
+    except SessionExpired:
+        _recover_and_notice("Reinvia la descrizione del caso e rispondi di nuovo alle domande.")
+        return
+    st.session_state["result"] = data
+    _append_diagnosis(data)
+    st.rerun()
+
+
+def _handle_followup(text: str):
+    _add_message("user", text)
+    try:
+        data = _post("/followup", json={"answer": text})
+    except SessionExpired:
+        _recover_and_notice("Reinvia la descrizione del caso e rispondi di nuovo alle domande.")
+        return
+    st.session_state["result"] = data
+    _append_diagnosis(data)
+    st.rerun()
+
+
+def _handle_stop():
+    _add_message("user", "Sono soddisfatto, fermati pure.", kind="text", meta={})
+    try:
+        data = _post("/stop")
+    except SessionExpired:
+        _recover_and_notice("Reinvia la descrizione del caso e rispondi di nuovo alle domande.")
+        return
+    st.session_state["result"] = data
+    _add_message("assistant", "Va bene, mi fermo qui.", kind="diagnosis", meta={"result": data})
+    st.rerun()
+
 
 def render_steps():
+    result = st.session_state["result"]
     steps = [
         ("1", "Descrizione", st.session_state["description_sent"]),
         ("2", "Questionario GCS", st.session_state["gcs_complete"]),
-        ("3", "Esito", st.session_state["result"] is not None),
+        ("3", "Diagnosi", result is not None),
+        ("4", "Approfondimento", bool(result) and not result.get("needs_followup")),
     ]
     done = [s[2] for s in steps]
     active_idx = done.index(False) if False in done else len(steps)
-    html_parts = ['<div class="steps">']
+    parts = ['<div class="steps">']
     for i, (num, label, is_done) in enumerate(steps):
         cls = "done" if is_done else ("active" if i == active_idx else "")
-        html_parts.append(f'<div class="step {cls}">{num} · {label}</div>')
-    html_parts.append("</div>")
-    st.markdown("".join(html_parts), unsafe_allow_html=True)
+        parts.append(f'<div class="step {cls}">{num} · {label}</div>')
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
 
 def metric_card(label: str, value: str, badge: str | None = None, sub: str | None = None):
     if badge:
@@ -218,17 +416,160 @@ def metric_card(label: str, value: str, badge: str | None = None, sub: str | Non
         unsafe_allow_html=True,
     )
 
-def render_sidebar():
+
+def _confidence_color(confidence: float, threshold: float) -> str:
+    if confidence >= threshold:
+        return "#059669"
+    if confidence >= max(threshold - 0.2, 0.0):
+        return "#d97706"
+    return "#dc2626"
+
+
+def _render_report(result: dict):
+    confidence = min(max(float(result.get("confidence", 0.0) or 0.0), 0.0), 1.0)
+    threshold = float(result.get("confidence_threshold", 0.0) or 0.0)
+    round_no = int(result.get("followup_round", 0) or 0)
+    max_rounds = int(result.get("max_followup_rounds", 0) or 0)
+    color = _confidence_color(confidence, threshold)
+
+    with st.container(border=True):
+        st.markdown('<div class="report-title">Report diagnostico</div>', unsafe_allow_html=True)
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            metric_card("GCS totale", f"{result.get('gcs_total', 0)}/15", sub="punteggio Glasgow")
+        with c2:
+            severity = result.get("gcs_severity", "unknown")
+            metric_card("Gravità", severity, badge=severity)
+        with c3:
+            fill = (
+                f'<div class="conf-track"><div class="conf-fill" '
+                f'style="width:{confidence * 100:.1f}%;background:{color}"></div></div>'
+            )
+            st.markdown(
+                f'<div class="metric-card"><div class="label">Confidenza</div>'
+                f'<div class="value" style="color:{color}">{confidence:.0%}</div>{fill}</div>',
+                unsafe_allow_html=True,
+            )
+        st.caption(
+            f"Ciclo di approfondimento {round_no} di {max_rounds} · soglia di confidenza {threshold:.0%}"
+        )
+
+        diagnosis = html.escape(str(result.get("diagnosis", ""))).replace("\n", "<br>")
+        st.markdown(
+            f'<div class="diag-box"><strong>Diagnosi</strong><br>{diagnosis}</div>',
+            unsafe_allow_html=True,
+        )
+
+        recommendations = result.get("recommendations") or []
+        if recommendations:
+            st.markdown("**Cosa fare adesso**")
+            items = "".join(f"<li>{html.escape(str(r))}</li>" for r in recommendations)
+            st.markdown(f'<ul class="rec-list">{items}</ul>', unsafe_allow_html=True)
+
+        documents = result.get("retrieved_documents") or []
+        if documents:
+            with st.expander(f"Fonti consultate ({len(documents)})"):
+                for i, doc in enumerate(documents, start=1):
+                    meta = doc.get("metadata") or {}
+                    page = meta.get("page", "?")
+                    score = float(doc.get("score", 0.0) or 0.0)
+                    header = (
+                        f"{i}. Fonte: {html.escape(str(doc.get('source', '?')))} "
+                        f"· pagina {html.escape(str(page))} · score {score:.3f}"
+                    )
+                    body = html.escape(str(doc.get("content", "")))
+                    st.markdown(
+                        f'<div class="doc-card"><div class="doc-meta">{header}</div>'
+                        f'<div class="doc-body">{body}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+
+
+def _render_message(msg: dict):
+    if msg.get("kind") == "diagnosis":
+        _render_report(msg.get("meta", {}).get("result", {}))
+        return
+    role = msg.get("role", "assistant")
+    text = html.escape(str(msg.get("text", ""))).replace("\n", "<br>")
+    if role == "user":
+        st.markdown(
+            f'<div class="msg-row user"><div class="bubble user">{text}</div>'
+            f'<div class="avatar user">TU</div></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<div class="msg-row assistant"><div class="avatar ai">AI</div>'
+            f'<div class="bubble assistant">{text}</div></div>',
+            unsafe_allow_html=True,
+        )
+
+
+def render_chat():
+    for msg in st.session_state["messages"]:
+        _render_message(msg)
+
+
+def _render_gcs_options():
+    question = st.session_state["next_question"] or {}
+    options = question.get("options") or {}
+    st.caption(
+        f"Scegli la risposta · domanda {question.get('current_step', '?')} "
+        f"di {question.get('total_steps', '?')}"
+    )
+    for key, label in options.items():
+        if st.button(
+            label,
+            key=f"gcs_{question.get('current_step')}_{key}",
+            use_container_width=True,
+        ):
+            _handle_answer(int(key))
+
+
+def _render_controls():
+    state = _flow_state()
+    if state == "description":
+        prompt = st.chat_input("Descrivi il problema del paziente...", key="chat_description")
+        if prompt:
+            _handle_description(prompt.strip())
+    elif state == "gcs":
+        _render_gcs_options()
+    elif state == "diagnose":
+        if st.button("Esegui diagnosi", type="primary", use_container_width=True, key="btn_diagnose"):
+            _handle_diagnose()
+    elif state == "followup":
+        result = st.session_state["result"] or {}
+        options = result.get("followup_options") or []
+        round_no = int(result.get("followup_round", 0) or 0)
+        if options:
+            st.caption("Scegli una risposta")
+            cols = st.columns(2)
+            for i, option in enumerate(options):
+                with cols[i % 2]:
+                    if st.button(option, key=f"quick_{round_no}_{i}", use_container_width=True):
+                        _handle_followup(option)
+        prompt = st.chat_input("Oppure scrivi la risposta...", key="chat_followup")
+        if prompt:
+            _handle_followup(prompt.strip())
+        if st.button("Sono soddisfatto · ferma la diagnosi", key="btn_stop", use_container_width=True):
+            _handle_stop()
+    else:
+        if st.button("Nuova diagnosi", use_container_width=True, key="btn_restart"):
+            start_session()
+            st.rerun()
+
+
+def render_sidebar() -> str:
     with st.sidebar:
         st.markdown('<div class="side-brand">SIAMO</div>', unsafe_allow_html=True)
         st.caption("Diagnosi medica assistita da RAG e Glasgow Coma Scale")
+        view = st.radio("Sezione", ["Diagnosi", "Documenti"], key="view")
         st.divider()
         st.markdown("**Stato sessione**")
         sid = st.session_state["session_id"]
-        fase = _phase_label()
         st.markdown(
             f'<div class="side-session">ID: {html.escape(sid[:10] + "..." if sid else "nessuna")}<br>'
-            f"Fase: {html.escape(fase)}</div>",
+            f"Fase: {html.escape(_phase_label())}</div>",
             unsafe_allow_html=True,
         )
         if st.button("Nuova sessione", key="sb_new", use_container_width=True):
@@ -241,122 +582,22 @@ def render_sidebar():
         st.caption("OCR vision + gemma3:1b + nomic-embed-text")
         st.divider()
         st.caption("Stack: ollama, qdrant, fastapi, langgraph")
+    return view
+
 
 def render_diagnosi():
-    sid = st.session_state["session_id"]
+    _ensure_session()
     st.markdown(
         '<div class="app-header"><h1>SIAMO · Sistema di Diagnosi Medica</h1>'
-        "<p>Descrivi il caso, rispondi al questionario Glasgow Coma Scale, "
-        "ottieni una diagnosi supportata dai documenti indicizzati.</p></div>",
+        "<p>Descrivi il caso e rispondi al questionario Glasgow Coma Scale. Se la confidenza "
+        "non è sufficiente, ti faccio qualche domanda semplice da verificare subito sul "
+        "paziente, finché la diagnosi è solida oppure decidi tu di fermarti.</p></div>",
         unsafe_allow_html=True,
     )
     render_steps()
-    with st.container(border=True):
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("**1 · Descrizione del problema**")
-        st.markdown(
-            '<div class="hint">Sintomi, durata, eta, contesto. Più è dettagliato, '
-            "più la ricerca nei documenti sarà mirata.</div>",
-            unsafe_allow_html=True,
-        )
-        desc = st.text_area(
-            "Descrivi il problema medico del paziente:",
-            value=st.session_state["problem_description"],
-            height=90,
-            key="description_input",
-        )
-        if st.button(
-            "Invia descrizione", type="primary", use_container_width=True,
-            disabled=not desc.strip(),
-        ):
-            data = api_post(f"/{sid}/description", json={"description": desc.strip()})
-            st.session_state["problem_description"] = desc.strip()
-            st.session_state["description_sent"] = True
-            st.session_state["next_question"] = data
-            st.session_state["question_index"] = 1
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-    with st.container(border=True):
-        st.markdown("**2 · Questionario Glasgow Coma Scale**")
-        q = st.session_state["next_question"]
-        if q is None and not st.session_state["gcs_complete"]:
-            st.markdown(
-                '<div class="hint">Invia la descrizione per iniziare le domande GCS.</div>',
-                unsafe_allow_html=True,
-            )
-        elif q is not None and not st.session_state["gcs_complete"]:
-            st.markdown(
-                f"**Domanda {q['current_step']} di {q['total_steps']}** · {html.escape(q['question'])}",
-                unsafe_allow_html=True,
-            )
-            options = q["options"]
-            labels = list(options.values())
-            choice = st.radio(
-                "Seleziona la risposta:",
-                options=labels,
-                key=f"gcs_q{st.session_state['question_index']}",
-            )
-            if st.button("Invia risposta", type="primary", use_container_width=True):
-                answer = int([key for key, value in options.items() if value == choice][0])
-                data = api_post(f"/{sid}/answer", json={"answer": answer})
-                if data.get("is_complete"):
-                    st.session_state["gcs_complete"] = True
-                    st.session_state["next_question"] = None
-                else:
-                    st.session_state["next_question"] = data
-                    st.session_state["question_index"] += 1
-                st.rerun()
-        elif st.session_state["gcs_complete"]:
-            st.success("Questionario completato: puoi eseguire la diagnosi.")
-            if st.button("Esegui diagnosi (RAG + LLM)", type="primary", use_container_width=True):
-                data = api_post(f"/{sid}/diagnose")
-                st.session_state["result"] = data
-                st.rerun()
-    result = st.session_state.get("result")
-    if result:
-        render_esito(result)
+    render_chat()
+    _render_controls()
 
-def render_esito(result: dict):
-    st.markdown("**3 · Esito**")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        metric_card("GCS totale", f"{result['gcs_total']}/15", sub="punteggio Glasgow")
-    with c2:
-        metric_card("Gravita", result["gcs_severity"], badge=result["gcs_severity"])
-    with c3:
-        conf = min(max(float(result["confidence"]), 0.0), 1.0)
-        fill = f'<div class="conf-track"><div class="conf-fill" style="width:{conf * 100:.1f}%"></div></div>'
-        st.markdown(
-            f'<div class="metric-card"><div class="label">Confidenza</div>'
-            f'<div class="value">{conf:.0%}</div>{fill}</div>',
-            unsafe_allow_html=True,
-        )
-    st.markdown('<div class="diag-box">', unsafe_allow_html=True)
-    st.markdown("**Diagnosi**")
-    st.markdown(result["diagnosis"])
-    st.markdown("</div>", unsafe_allow_html=True)
-    recs = result.get("recommendations") or []
-    if recs:
-        st.markdown("**Raccomandazioni**")
-        items = "".join(f"<li>{html.escape(str(r))}</li>" for r in recs)
-        st.markdown(f'<ul class="rec-list">{items}</ul>', unsafe_allow_html=True)
-    docs = result.get("retrieved_documents") or []
-    if docs:
-        with st.expander(f"Documenti recuperati ({len(docs)})"):
-            for i, doc in enumerate(docs, start=1):
-                meta = doc.get("metadata") or {}
-                page = meta.get("page", "?")
-                score = float(doc.get("score", 0.0))
-                header = (
-                    f"{i}. Fonte: {html.escape(str(doc.get('source', '?')))} "
-                    f" · pagina {html.escape(str(page))} · score {score:.3f}"
-                )
-                body = html.escape(str(doc.get("content", "")))
-                st.markdown(
-                    f'<div class="doc-card"><div class="doc-meta">{header}</div>'
-                    f'<div class="doc-body">{body}</div></div>',
-                    unsafe_allow_html=True,
-                )
 
 def render_documenti():
     st.markdown(
@@ -381,7 +622,7 @@ def render_documenti():
     with c2:
         st.markdown("**Oppure incolla del testo**")
         testo = st.text_area(
-            "Testo medico da indicizzare: separa i paragrafi con una riga vuota.",
+            "Testo medico da indicizzare: verrà incorporato e reso ricercabile.",
             height=100,
             key="raw_text_input",
         )
@@ -417,15 +658,16 @@ def render_documenti():
         ingested = res.get("ingested", 0)
         st.success(f"Indicizzati {ingested} testi.")
 
+
 def main():
     _init_state()
     st.markdown(_CSS, unsafe_allow_html=True)
-    render_sidebar()
-    tab_diag, tab_doc = st.tabs(["Diagnosi", "Documenti"])
-    with tab_diag:
-        render_diagnosi()
-    with tab_doc:
+    view = render_sidebar()
+    if view == "Documenti":
         render_documenti()
+    else:
+        render_diagnosi()
+
 
 if __name__ == "__main__":
     main()

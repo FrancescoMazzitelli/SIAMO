@@ -31,6 +31,7 @@ class RAGDiagnosisService:
     def start_session(self) -> tuple[str, str]:
         session_id = str(uuid.uuid4())
         self.sessions[session_id] = {
+            "session_id": session_id,
             "phase": "description",
             "problem_description": "",
             "gcs_answers": {},
@@ -47,6 +48,14 @@ class RAGDiagnosisService:
             "recommendations": [],
             "is_complete": False,
             "error": None,
+            "followup_round": 0,
+            "followup_history": [],
+            "current_followup_question": "",
+            "current_followup_options": [],
+            "needs_followup": False,
+            "stopped_by_user": False,
+            "max_followup_rounds": self.settings.max_followup_rounds,
+            "confidence_threshold": self.settings.confidence_threshold,
         }
         message = (
             "Benvenuto nel sistema di valutazione clinica. "
@@ -98,18 +107,35 @@ class RAGDiagnosisService:
             "is_complete": True,
         }
 
-    async def run_rag_and_diagnose(self, session_id: str) -> DiagnosisResult:
-        if session_id not in self.sessions:
-            raise ValueError("Sessione non trovata")
-
-        state = dict(self.sessions[session_id])
-
+    async def _run_pipeline(self, state: dict) -> dict:
         state = await self.graph_nodes.build_rag_query(state)
         state = await self.graph_nodes.retrieve_documents(state)
         state = await self.graph_nodes.generate_diagnosis(state)
+        return state
 
-        self.sessions[session_id].update(state)
+    async def _apply_followup_decision(self, state: dict) -> dict:
+        threshold = state.get("confidence_threshold", self.settings.confidence_threshold)
+        max_rounds = state.get("max_followup_rounds", self.settings.max_followup_rounds)
+        round_no = state.get("followup_round", 0)
+        confidence = state.get("confidence", 0.0)
 
+        if state.get("stopped_by_user"):
+            logger.info("diagnosis_settled", session=state["session_id"], confidence=confidence, round=round_no, reason="user_stop")
+            return {**state, "needs_followup": False, "is_complete": True, "phase": "complete"}
+
+        if confidence >= threshold:
+            logger.info("diagnosis_settled", session=state["session_id"], confidence=confidence, round=round_no, reason="confidence")
+            return {**state, "needs_followup": False, "is_complete": True, "phase": "complete"}
+
+        if round_no >= max_rounds:
+            logger.info("diagnosis_settled", session=state["session_id"], confidence=confidence, round=round_no, reason="max_rounds")
+            return {**state, "needs_followup": False, "is_complete": True, "phase": "complete"}
+
+        logger.info("followup_requested", session=state["session_id"], confidence=confidence, round=round_no, threshold=threshold)
+        state = await self.graph_nodes.generate_followup_question(state)
+        return {**state, "needs_followup": True, "is_complete": False}
+
+    def _build_result(self, state: dict) -> DiagnosisResult:
         retrieved_docs = [
             RetrievedDocument(
                 content=doc.page_content,
@@ -121,7 +147,7 @@ class RAGDiagnosisService:
         ]
 
         return DiagnosisResult(
-            session_id=session_id,
+            session_id=state["session_id"],
             problem_description=state.get("problem_description", ""),
             gcs_total=state.get("gcs_total", 0),
             gcs_severity=state.get("gcs_severity", "unknown"),
@@ -129,8 +155,70 @@ class RAGDiagnosisService:
             confidence=state.get("confidence", 0.0),
             recommendations=state.get("recommendations", []),
             retrieved_documents=retrieved_docs,
-            is_complete=True,
+            is_complete=state.get("is_complete", False),
+            needs_followup=state.get("needs_followup", False),
+            followup_question=state.get("current_followup_question", ""),
+            followup_options=state.get("current_followup_options", []),
+            followup_round=state.get("followup_round", 0),
+            max_followup_rounds=state.get("max_followup_rounds", 0),
+            confidence_threshold=state.get("confidence_threshold", 0.0),
+            stopped=state.get("stopped_by_user", False),
         )
+
+    async def run_rag_and_diagnose(self, session_id: str) -> DiagnosisResult:
+        if session_id not in self.sessions:
+            raise ValueError("Sessione non trovata")
+
+        state = dict(self.sessions[session_id])
+        state = await self._run_pipeline(state)
+        state = await self._apply_followup_decision(state)
+
+        self.sessions[session_id].update(state)
+        return self._build_result(state)
+
+    async def run_followup(self, session_id: str, answer: str) -> DiagnosisResult:
+        if session_id not in self.sessions:
+            raise ValueError("Sessione non trovata")
+
+        state = dict(self.sessions[session_id])
+        history = list(state.get("followup_history", []))
+        history.append(
+            {
+                "question": state.get("current_followup_question", ""),
+                "answer": answer,
+            }
+        )
+        state = {
+            **state,
+            "followup_history": history,
+            "followup_round": state.get("followup_round", 0) + 1,
+            "current_followup_question": "",
+            "current_followup_options": [],
+            "stopped_by_user": False,
+        }
+
+        logger.info("followup_answer_received", session=session_id, round=state["followup_round"])
+
+        state = await self._run_pipeline(state)
+        state = await self._apply_followup_decision(state)
+
+        self.sessions[session_id].update(state)
+        return self._build_result(state)
+
+    def stop_refinement(self, session_id: str) -> DiagnosisResult:
+        if session_id not in self.sessions:
+            raise ValueError("Sessione non trovata")
+
+        state = {
+            **self.sessions[session_id],
+            "stopped_by_user": True,
+            "needs_followup": False,
+            "is_complete": True,
+            "phase": "complete",
+        }
+        self.sessions[session_id].update(state)
+        logger.info("refinement_stopped", session=session_id, confidence=state.get("confidence", 0.0))
+        return self._build_result(state)
 
     async def ingest_file(self, file_bytes: bytes, filename: str) -> dict:
         doc = await self.doc_processor.process_document(file_bytes, filename)

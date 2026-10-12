@@ -21,6 +21,13 @@ class DiagnosisResult(BaseModel):
     recommendations: list[str] = Field(default_factory=list)
     retrieved_documents: list[RetrievedDocument] = Field(default_factory=list)
     is_complete: bool = False
+    needs_followup: bool = False
+    followup_question: str = ""
+    followup_options: list[str] = Field(default_factory=list)
+    followup_round: int = 0
+    max_followup_rounds: int = 0
+    confidence_threshold: float = 0.0
+    stopped: bool = False
 
 
 class StartDiagnosisResponse(BaseModel):

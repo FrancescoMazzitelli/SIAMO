@@ -27,13 +27,17 @@ class AnswerRequest(BaseModel):
     answer: int = Field(..., ge=1, le=6)
 
 
+class FollowupRequest(BaseModel):
+    answer: str = Field(..., min_length=1, max_length=2000)
+
+
 class IngestRequest(BaseModel):
     texts: list[str] = Field(..., min_length=1)
     metadatas: list[dict] | None = None
 
 
 @router.post("/start")
-async def start_diagnosis(req: StartRequest):
+async def start_diagnosis(req: StartRequest | None = None):
     try:
         service = get_service()
         session_id, message = service.start_session()
@@ -75,6 +79,30 @@ async def run_diagnosis(session_id: str):
     try:
         service = get_service()
         result = await service.run_rag_and_diagnose(session_id)
+        return result.model_dump()
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{session_id}/followup")
+async def submit_followup(session_id: str, req: FollowupRequest):
+    try:
+        service = get_service()
+        result = await service.run_followup(session_id, req.answer)
+        return result.model_dump()
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{session_id}/stop")
+async def stop_diagnosis(session_id: str):
+    try:
+        service = get_service()
+        result = service.stop_refinement(session_id)
         return result.model_dump()
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

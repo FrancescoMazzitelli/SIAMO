@@ -58,6 +58,7 @@ services:
     build: .
     ports:
       - "8080:8000"
+    restart: unless-stopped
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
       QDRANT_URL: http://qdrant:6333
@@ -70,6 +71,9 @@ services:
       OCR_MAX_TOKENS: 8192
       OCR_MAX_LONGEST_EDGE: 1540
       MIN_PARAGRAPH_CHARS: 80
+      CONFIDENCE_THRESHOLD: 0.7
+      MAX_FOLLOWUP_ROUNDS: 4
+      SYNTHETIC_DATA_DIR: synthetic_data
     depends_on:
       ollama:
         condition: service_healthy

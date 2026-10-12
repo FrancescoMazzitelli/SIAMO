@@ -20,4 +20,12 @@ class GraphState(TypedDict):
     recommendations: list[str]
     is_complete: bool
     error: str | None
-    phase: Literal["description", "questionnaire", "rag", "diagnosis", "complete"]
+    phase: Literal["description", "questionnaire", "rag", "diagnosis", "followup", "complete"]
+    followup_round: int
+    followup_history: list[dict]
+    current_followup_question: str
+    current_followup_options: list[str]
+    needs_followup: bool
+    stopped_by_user: bool
+    max_followup_rounds: int
+    confidence_threshold: float

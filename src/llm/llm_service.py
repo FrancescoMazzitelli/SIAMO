@@ -1,11 +1,32 @@
 from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage, SystemMessage
 import json
+import re
 import structlog
 
 from src.core.config import get_settings
 
 logger = structlog.get_logger()
+
+
+def parse_float(value: str | int | float | None) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        result = float(value)
+    elif isinstance(value, str) and value.strip():
+        cleaned = value.strip().replace(",", ".").replace("%", "")
+        match = re.search(r"\d+(?:\.\d+)?", cleaned)
+        if not match:
+            return None
+        result = float(match.group(0))
+    else:
+        return None
+    if result < 0.0:
+        return None
+    if 1.0 < result <= 100.0:
+        result = result / 100.0
+    return result
 
 
 class LLMService:
@@ -27,15 +48,33 @@ class LLMService:
         response = await self.llm.ainvoke(messages)
         return response.content
 
+    @staticmethod
+    def _extract_json(text: str) -> dict | None:
+        if not isinstance(text, str):
+            return None
+        start = text.find("{")
+        end = text.rfind("}")
+        candidates = []
+        if start >= 0 and end > start:
+            candidates.append(text[start : end + 1])
+        stripped = text.strip().strip("`")
+        if stripped.startswith("{") and stripped not in candidates:
+            candidates.append(stripped)
+        for candidate in candidates:
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+        return None
+
     async def generate_json(self, system_prompt: str, user_prompt: str) -> dict:
         raw = await self.generate(system_prompt, user_prompt)
-        try:
-            json_start = raw.find("{")
-            json_end = raw.rfind("}") + 1
-            if json_start >= 0 and json_end > json_start:
-                return json.loads(raw[json_start:json_end])
-        except json.JSONDecodeError:
-            logger.warning("json_parse_failed", raw=raw[:200])
+        result = self._extract_json(raw)
+        if result is not None:
+            return result
+        logger.warning("json_parse_failed", raw=raw[:200])
         return {
             "diagnosis": raw,
             "confidence": 0.5,
@@ -44,7 +83,8 @@ class LLMService:
 
     async def generate_float(self, system_prompt: str, user_prompt: str) -> float:
         raw = await self.generate(system_prompt, user_prompt)
-        try:
-            return float(raw.strip())
-        except ValueError:
+        value = parse_float(raw)
+        if value is None:
+            logger.warning("float_parse_failed", raw=raw[:200])
             return 0.5
+        return value

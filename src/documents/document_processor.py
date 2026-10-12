@@ -2,10 +2,11 @@
 
 PDF / image files: render pages to JPG -> OCR with the vision model (Markdown)
 -> split Markdown into paragraphs -> chunk paragraphs -> summarise with the LLM.
-Plain text files skip OCR and are split straight into paragraphs (blank line rule).
+Plain text files skip OCR and are split straight into paragraphs (heading rule).
 """
 
 import uuid
+from pathlib import Path
 
 import structlog
 
@@ -20,6 +21,11 @@ from src.core.config import get_settings
 logger = structlog.get_logger()
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
+
+
+def doc_id_for(filename: str) -> str:
+    """Deterministic document id derived from the file name."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"siamo:{filename}"))[:12]
 
 
 class DocumentProcessor:
@@ -46,7 +52,7 @@ class DocumentProcessor:
         raw_text = "\n\n".join(segment.text for segment in segments)
         summary = await self.generate_summary(raw_text, filename)
 
-        doc_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"siamo:{filename}"))[:12]
+        doc_id = doc_id_for(filename)
         doc = ProcessedDocument(
             doc_id=doc_id,
             filename=filename,

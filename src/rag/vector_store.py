@@ -1,5 +1,12 @@
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
+from qdrant_client.models import (
+    Distance,
+    VectorParams,
+    PointStruct,
+    FieldCondition,
+    Filter,
+    MatchValue,
+)
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
 import uuid
@@ -41,6 +48,16 @@ class VectorStoreService:
 
     def _embed(self, text: str) -> list[float]:
         return self.embeddings.embed_query(text)
+
+    def has_document(self, doc_id: str) -> bool:
+        result = self.client.count(
+            collection_name=self.settings.qdrant_collection_name,
+            count_filter=Filter(
+                must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))]
+            ),
+            exact=True,
+        )
+        return result.count > 0
 
     def index_hierarchical_document(self, doc: ProcessedDocument) -> dict:
         points = []

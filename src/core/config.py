@@ -17,9 +17,11 @@ class Settings(BaseSettings):
     ocr_max_longest_edge: int = 1540
     top_k_documents: int = 5
     confidence_threshold: float = 0.7
+    max_followup_rounds: int = 4
     min_paragraph_chars: int = 80
     chunk_max_chars: int = 500
     chunk_overlap: int = 50
+    synthetic_data_dir: str = "synthetic_data"
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 @lru_cache

@@ -60,6 +60,7 @@ RAG_QUERY_BUILDER_PROMPT = (
     "Problema descritto: {problem_description}\n"
     "Punteggio GCS: {gcs_total}/15 (Gravita: {gcs_severity})\n"
     "Dettaglio: E={gcs_eye}, V={gcs_verbal}, M={gcs_motor}\n\n"
+    "Informazioni aggiuntive dal dialogo:\n{additional_information}\n\n"
     "La query deve essere in italiano, focalizzata su diagnosi differenziale, "
     "protocolli di trattamento e considerazioni cliniche rilevanti. "
     "Restituisci solo la query, senza altro testo."
@@ -72,7 +73,10 @@ DIAGNOSIS_PROMPT = (
     "PUNTEGGIO GCS: {gcs_total}/15 (Gravita: {gcs_severity})\n"
     "Dettaglio GCS - Apertura Oculare: {gcs_eye}/4, Risposta Verbale: {gcs_verbal}/5, "
     "Risposta Motoria: {gcs_motor}/6\n\n"
+    "INFORMAZIONI AGGIUNTIVE (dal dialogo con il clinico):\n{additional_information}\n\n"
     "INFORMAZIONI RECUPERATE DAL DATABASE:\n{context_documents}\n\n"
+    "Integra le informazioni aggiuntive nella valutazione: se presenti, riformula "
+    "la diagnosi tenendone conto.\n\n"
     "Fornisci:\n"
     "1. DIAGNOSI: Una valutazione diagnostica differenziale basata sui dati clinici.\n"
     "2. CONFIANZA: Un punteggio di confidenza da 0.0 a 1.0 sulla precisione della "
@@ -84,11 +88,32 @@ DIAGNOSIS_PROMPT = (
     "Le raccomandazioni devono essere una lista di stringhe in italiano."
 )
 
+FOLLOWUP_QUESTION_PROMPT = (
+    "Sei un assistente che aiuta una persona NON medica, per esempio un familiare o "
+    "un soccorritore, che ha il paziente davanti a se. La diagnosi ha ancora una "
+    "confidenza di {confidence:.2f} e serve un dettaglio in piu.\n\n"
+    "Diagnosi attuale: {diagnosis}\n"
+    "Problema descritto: {problem_description}\n"
+    "Punteggio GCS: {gcs_total}/15 (Gravita: {gcs_severity})\n\n"
+    "Domande gia poste:\n{asked_questions}\n\n"
+    "Formula UNA sola domanda SEMPLICE e concreta, comprensibile a chi non e un "
+    "medico. La domanda deve riguardare un segno che si puo osservare o verificare "
+    "SUBITO guardando il paziente o chiedendogli un gesto semplice: per esempio "
+    "sorridere, alzare entrambe le braccia, stringere le mani, parlare in modo "
+    "comprensibile, seguire un oggetto con gli occhi, stare in piedi, rispondere a "
+    "una domanda semplice. Non usare termini medici tecnici, non chiedere esami, "
+    "referti o anamnesi complessa, non ripetere le domande gia poste.\n\n"
+    "Rispondi SOLO in JSON valido con le chiavi: 'question' (il testo della domanda) "
+    "e 'options' (da 2 a 4 risposte brevi tra cui scegliere, ad esempio 'Si', 'No', "
+    "'Solo un lato', 'Non riesco a valutarlo'). Le opzioni devono essere brevissime."
+)
+
 CONFIDENCE_CALIBRATION_PROMPT = (
     "Valuta la qualita dei dati disponibili per la diagnosi:\n"
     "- Problema descritto: {has_description}\n"
     "- Punteggio GCS completo: {has_full_gcs}\n"
     "- Documenti recuperati: {doc_count}\n"
-    "Suggerisci un fattore di confidenza tra 0.0 e 1.0. "
+    "Stima una confidenza complessiva tra 0.0 e 1.0 per la diagnosi, "
+    "coerente con la qualita dei dati disponibili. "
     "Rispondi solo con il numero float."
 )
