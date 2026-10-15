@@ -29,6 +29,24 @@ def parse_float(value: str | int | float | None) -> float | None:
     return result
 
 
+def parse_grade(
+    value: str | int | float | None, low: int = 1, high: int = 10, default: int = 5
+) -> int:
+    """Parse a bounded integer grade (e.g. the judge 1-10 scores)."""
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        result = float(value)
+    elif isinstance(value, str) and value.strip():
+        match = re.search(r"\d+(?:[.,]\d+)?", value.replace(",", "."))
+        if not match:
+            return default
+        result = float(match.group(0))
+    else:
+        return default
+    return int(max(low, min(high, round(result))))
+
+
 class LLMService:
     """Wrapper around the Ollama text-generation LLM (gemma3:1b)."""
 
@@ -37,7 +55,7 @@ class LLMService:
         self.llm = ChatOllama(
             model=self.settings.llm_model,
             base_url=self.settings.ollama_base_url,
-            temperature=0.3,
+            temperature=self.settings.llm_temperature,
         )
 
     async def generate(self, system_prompt: str, user_prompt: str) -> str:

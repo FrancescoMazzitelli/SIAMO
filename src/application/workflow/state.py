@@ -15,6 +15,11 @@ class GraphState(TypedDict):
     gcs_motor: int
     rag_query: str
     retrieved_documents: Annotated[list[Document], lambda x, y: x + y]
+    candidates: list[dict]
+    evaluations: list[dict]
+    best_response: dict
+    best_index: int
+    calibration: float
     diagnosis: str
     confidence: float
     recommendations: list[str]

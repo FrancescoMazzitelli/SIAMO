@@ -25,10 +25,6 @@ SUPPORTED_EXTENSIONS = {
     ".tiff",
 }
 
-MODEL_POLL_SECONDS = 5
-MODEL_TIMEOUT_SECONDS = 30 * 60
-
-
 def _normalize_model_name(name: str) -> str:
     repo, separator, tag = name.partition(":")
     if separator and tag == "latest":
@@ -43,7 +39,7 @@ async def _wait_for_ollama_models() -> None:
         for m in (settings.embedding_model, settings.llm_model, settings.ocr_model)
     }
     logger.info("waiting_for_ollama_models", required=sorted(required))
-    deadline = time.monotonic() + MODEL_TIMEOUT_SECONDS
+    deadline = time.monotonic() + settings.startup_timeout_seconds
     last_report = 0.0
     async with httpx.AsyncClient(base_url=settings.ollama_base_url, timeout=5) as client:
         while True:
@@ -73,7 +69,7 @@ async def _wait_for_ollama_models() -> None:
                     "Ollama models not available within timeout: "
                     + ", ".join(sorted(required - present))
                 )
-            await asyncio.sleep(MODEL_POLL_SECONDS)
+            await asyncio.sleep(settings.startup_poll_seconds)
 
 
 async def ingest_synthetic_data() -> int:

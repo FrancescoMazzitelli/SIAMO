@@ -40,7 +40,7 @@ class OCRService:
 
     async def extract_page_markdown(self, image_jpeg: bytes, page_number: int) -> str:
         logger.info("ocr_page_start", page=page_number, model=self.settings.ocr_model)
-        async with httpx.AsyncClient(timeout=600.0) as client:
+        async with httpx.AsyncClient(timeout=self.settings.ocr_timeout_seconds) as client:
             resp = await client.post(self.chat_url, json=self._payload(image_jpeg))
             resp.raise_for_status()
             data = resp.json()

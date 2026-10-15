@@ -1,0 +1,55 @@
+# --- Servizio Ollama ------------------------------------------------------------------
+ollama_base_url = "http://ollama:11434"
+
+# --- Modelli --------------------------------------------------------------------------
+# Cambia qui i modelli: vengono scaricati automaticamente da scripts/pull_models.py.
+# Se cambi embedding_model aggiorna anche embedding_dimension e ricrea la collezione.
+embedding_model = "nomic-embed-text"
+embedding_dimension = 768
+llm_model = "gemma4:e2b"
+llm_temperature = 0.4
+ocr_model = "maternion/LightOnOCR-2:1b"
+
+# --- OCR ------------------------------------------------------------------------------
+ocr_temperature = 0.1
+ocr_max_tokens = 8192
+ocr_keep_alive = "30m"
+ocr_num_gpu = -1
+ocr_max_longest_edge = 1540
+ocr_timeout_seconds = 600.0
+jpeg_quality = 85
+
+# --- Qdrant ---------------------------------------------------------------------------
+qdrant_url = "http://qdrant:6333"
+qdrant_collection_name = "medical_knowledge"
+qdrant_batch_size = 100
+
+# --- Ingestione documenti -------------------------------------------------------------
+synthetic_data_dir = "synthetic_data"
+min_paragraph_chars = 80
+chunk_max_chars = 800
+chunk_overlap = 200
+startup_poll_seconds = 5
+startup_timeout_seconds = 1800
+
+# --- Retrieval ------------------------------------------------------------------------
+top_k_documents = 5
+chunk_candidates_top_k = 10
+context_top_k = 5
+rerank_excerpt_chars = 700
+
+# --- Diagnosi -------------------------------------------------------------------------
+candidate_count = 5
+candidate_attempts_extra = 3
+confidence_threshold = 0.7
+max_followup_rounds = 4
+
+# --- API backend ----------------------------------------------------------------------
+api_host = "0.0.0.0"
+api_port = 8000
+cors_origins = ["*"]
+
+# --- GUI Streamlit --------------------------------------------------------------------
+gui_api_url = "http://diagnosis-api:8000"
+gui_score_green = 0.75
+gui_score_amber = 0.50

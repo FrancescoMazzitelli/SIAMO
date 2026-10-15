@@ -8,7 +8,12 @@ from src.llm.llm_service import LLMService
 from src.documents.document_processor import DocumentProcessor
 from src.rag.hierarchical_retriever import HierarchicalRetriever
 from src.core.models.gcs import GCSQuestionnaire
-from src.core.models.diagnosis import DiagnosisResult, RetrievedDocument
+from src.core.models.diagnosis import (
+    DiagnosisResult,
+    RetrievedDocument,
+    DiagnosticCandidate,
+    CandidateEvaluation,
+)
 from src.prompts.italy import GCS_QUESTIONS
 from src.core.config import get_settings
 
@@ -24,7 +29,7 @@ class RAGDiagnosisService:
         self.vector_store = VectorStoreService()
         self.llm = LLMService()
         self.doc_processor = DocumentProcessor()
-        self.hierarchical_retriever = HierarchicalRetriever()
+        self.hierarchical_retriever = HierarchicalRetriever(self.llm)
         self.graph_nodes = GraphNodes(self.vector_store, self.llm, self.hierarchical_retriever)
         self.sessions: dict[str, dict] = {}
 
@@ -43,6 +48,11 @@ class RAGDiagnosisService:
             "gcs_motor": 0,
             "rag_query": "",
             "retrieved_documents": [],
+            "candidates": [],
+            "evaluations": [],
+            "best_response": {},
+            "best_index": 0,
+            "calibration": 0.0,
             "diagnosis": "",
             "confidence": 0.0,
             "recommendations": [],
@@ -111,6 +121,7 @@ class RAGDiagnosisService:
         state = await self.graph_nodes.build_rag_query(state)
         state = await self.graph_nodes.retrieve_documents(state)
         state = await self.graph_nodes.generate_diagnosis(state)
+        state = await self.graph_nodes.evaluate_candidates(state)
         return state
 
     async def _apply_followup_decision(self, state: dict) -> dict:
@@ -154,6 +165,15 @@ class RAGDiagnosisService:
             diagnosis=state.get("diagnosis", ""),
             confidence=state.get("confidence", 0.0),
             recommendations=state.get("recommendations", []),
+            candidates=[
+                DiagnosticCandidate(**candidate)
+                for candidate in state.get("candidates", [])
+            ],
+            evaluations=[
+                CandidateEvaluation(**evaluation)
+                for evaluation in state.get("evaluations", [])
+            ],
+            best_index=state.get("best_index", 0),
             retrieved_documents=retrieved_docs,
             is_complete=state.get("is_complete", False),
             needs_followup=state.get("needs_followup", False),

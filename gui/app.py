@@ -6,11 +6,26 @@ The user-facing text of this app is Italian by design.
 
 import html
 import os
+import tomllib
+from pathlib import Path
 
 import requests
 import streamlit as st
 
-API_URL = os.environ.get("SIAMO_API_URL", "http://localhost:8000").rstrip("/")
+
+def _load_config() -> dict:
+    """Read the external TOML configuration shared with the backend."""
+    path = Path(os.environ.get("SIAMO_CONFIG_FILE", "config/settings.toml")).expanduser()
+    if not path.is_file():
+        return {}
+    with path.open("rb") as handle:
+        return tomllib.load(handle)
+
+
+CONFIG = _load_config()
+API_URL = (
+    os.environ.get("SIAMO_API_URL") or CONFIG.get("gui_api_url") or "http://localhost:8000"
+).rstrip("/")
 BASE = f"{API_URL}/api/v1/diagnosis"
 
 st.set_page_config(page_title="SIAMO · Diagnosi GCS RAG", layout="wide")
@@ -21,20 +36,48 @@ _CSS = """
     background: linear-gradient(180deg, #f6f9fc 0%, #eef3f9 100%);
 }
 
+/* nasconde la barra superiore di Streamlit (Deploy, menu, decorazione) per
+   evitare la sovrapposizione con l'header ancorato */
+header[data-testid="stHeader"],
+[data-testid="stToolbar"],
+[data-testid="stDecoration"] {
+    display: none;
+}
+
+/* riduce lo spazio in alto lasciato dalla barra ora nascosta */
+[data-testid="stMainBlockContainer"],
+.block-container {
+    padding-top: 1.75rem !important;
+}
+
 /* header */
 .app-header {
     background: radial-gradient(120% 150% at 0% 0%, #0ea5e9 0%, #0e7490 45%, #0f766e 100%);
     color: #ffffff;
     padding: 1.5rem 1.9rem;
     border-radius: 20px;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0;
     box-shadow: 0 16px 38px rgba(13, 74, 110, 0.22);
 }
 .app-header h1 { color: #ffffff; margin: 0; font-size: 1.8rem; font-weight: 800; letter-spacing: -0.01em; }
 .app-header p  { color: rgba(255, 255, 255, 0.88); margin: 0.4rem 0 0; font-size: 0.95rem; max-width: 62ch; }
 
+/* testata ancorata in alto: e' il suo contenitore Streamlit a restare sticky,
+   cosi l'header rimane fisso e scorre solo il contenuto sottostante */
+div[data-testid="stElementContainer"]:has(.app-header),
+div[data-testid="element-container"]:has(.app-header),
+div.element-container:has(.app-header) {
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    background: #f6f9fc;
+    padding-top: 1.25rem;
+    padding-bottom: 1.1rem;
+    margin-bottom: -1.1rem;
+}
+
 /* stepper */
-.steps { display: flex; gap: 0.55rem; margin: 1.1rem 0 1.4rem; }
+.steps { display: flex; gap: 0.55rem; margin: 1rem 0 1.2rem; }
 .step {
     flex: 1; text-align: center; padding: 0.52rem 0.5rem;
     border-radius: 12px; font-size: 0.82rem; font-weight: 600;
@@ -107,6 +150,53 @@ _CSS = """
     border-radius: 12px; padding: 0.6rem 0.9rem; margin-bottom: 0.5rem;
     font-size: 0.92rem; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
 }
+.cand-card .rec-list { margin-top: 0.3rem; }
+.cand-card .rec-list li { font-size: 0.86rem; padding: 0.42rem 0.7rem; margin-bottom: 0.35rem; }
+
+/* candidati diagnostici */
+.cand-card {
+    background: #ffffff; border: 1px solid #e6edf5; border-radius: 16px;
+    padding: 1rem 1.15rem; margin-bottom: 0.7rem;
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05);
+}
+.cand-card.best {
+    border: 1px solid #a7f3d0; border-left: 5px solid #0e7490;
+    background: linear-gradient(180deg, #f6fefb, #eefaf6);
+    box-shadow: 0 12px 26px rgba(14, 116, 144, 0.14);
+}
+.cand-head { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.cand-badge {
+    font-size: 0.67rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+    padding: 0.18rem 0.62rem; border-radius: 999px; background: #eef2f7; color: #475569;
+}
+.cand-badge.best { background: #0e7490; color: #ffffff; }
+.cand-name { font-weight: 800; color: #0f172a; font-size: 1.02rem; flex: 1; }
+.cand-conf { font-weight: 800; font-size: 1.12rem; }
+.cand-motiv { color: #334155; font-size: 0.9rem; line-height: 1.5; margin-top: 0.5rem; }
+.cand-sub {
+    font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em;
+    color: #94a3b8; font-weight: 700; margin-top: 0.6rem;
+}
+.section-label {
+    font-size: 0.78rem; font-weight: 700; color: #0f172a;
+    margin: 0.9rem 0 0.5rem;
+}
+
+/* griglia LLM-as-Judge */
+.judge-grid { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.7rem; }
+.judge-item {
+    flex: 1; min-width: 86px; background: #f8fafc; border: 1px solid #e6edf5;
+    border-radius: 10px; padding: 0.42rem 0.5rem; text-align: center;
+}
+.judge-item .jl {
+    display: block; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: #94a3b8; font-weight: 700;
+}
+.judge-item .jv { display: block; font-size: 1.05rem; font-weight: 800; color: #0f172a; }
+.judge-item.total { background: #0e7490; border-color: #0e7490; }
+.judge-item.total .jl { color: rgba(255, 255, 255, 0.85); }
+.judge-item.total .jv { color: #ffffff; }
+.judge-comment { margin-top: 0.55rem; font-size: 0.85rem; color: #475569; font-style: italic; }
 
 /* documenti recuperati */
 .doc-card {
@@ -164,6 +254,7 @@ def _init_state():
     st.session_state.setdefault("messages", [])
     st.session_state.setdefault("last_ingest", None)
     st.session_state.setdefault("view", "Diagnosi")
+    st.session_state.setdefault("show_extra_info", False)
 
 
 def _reset_flow():
@@ -175,6 +266,7 @@ def _reset_flow():
     st.session_state["result"] = None
     st.session_state["problem_description"] = ""
     st.session_state["messages"] = []
+    st.session_state["show_extra_info"] = False
 
 
 def api_post(path: str, json: dict | None = None, files: dict | None = None) -> dict:
@@ -341,7 +433,11 @@ def _settled_message(data: dict) -> str:
 
 
 def _append_diagnosis(data: dict):
-    intro = "Ho aggiornato la diagnosi." if data.get("followup_round", 0) > 0 else "Ecco la prima valutazione."
+    intro = (
+        "Ho aggiornato le ipotesi diagnostiche."
+        if data.get("followup_round", 0) > 0
+        else "Ecco la prima valutazione: ho messo a confronto le ipotesi diagnostiche principali."
+    )
     _add_message("assistant", intro, kind="diagnosis", meta={"result": data})
     if data.get("needs_followup"):
         question = data.get("followup_question") or "Puoi darmi un altro dettaglio osservando il paziente?"
@@ -350,10 +446,16 @@ def _append_diagnosis(data: dict):
         _add_message("assistant", _settled_message(data), kind="text", meta={})
 
 
-def _handle_diagnose():
+def _handle_diagnose(loader=None):
     _add_message("user", "Esegui la diagnosi.", kind="text", meta={})
     try:
-        data = _post("/diagnose")
+        if loader is not None:
+            with loader.container():
+                with st.spinner("Sto formulando e confrontando le ipotesi diagnostiche..."):
+                    data = _post("/diagnose")
+        else:
+            with st.spinner("Sto formulando e confrontando le ipotesi diagnostiche..."):
+                data = _post("/diagnose")
     except SessionExpired:
         _recover_and_notice("Reinvia la descrizione del caso e rispondi di nuovo alle domande.")
         return
@@ -365,7 +467,8 @@ def _handle_diagnose():
 def _handle_followup(text: str):
     _add_message("user", text)
     try:
-        data = _post("/followup", json={"answer": text})
+        with st.spinner("Aggiorno le ipotesi con le nuove informazioni..."):
+            data = _post("/followup", json={"answer": text})
     except SessionExpired:
         _recover_and_notice("Reinvia la descrizione del caso e rispondi di nuovo alle domande.")
         return
@@ -386,7 +489,7 @@ def _handle_stop():
     st.rerun()
 
 
-def render_steps():
+def _steps_html() -> str:
     result = st.session_state["result"]
     steps = [
         ("1", "Descrizione", st.session_state["description_sent"]),
@@ -401,7 +504,7 @@ def render_steps():
         cls = "done" if is_done else ("active" if i == active_idx else "")
         parts.append(f'<div class="step {cls}">{num} · {label}</div>')
     parts.append("</div>")
-    st.markdown("".join(parts), unsafe_allow_html=True)
+    return "".join(parts)
 
 
 def metric_card(label: str, value: str, badge: str | None = None, sub: str | None = None):
@@ -423,6 +526,101 @@ def _confidence_color(confidence: float, threshold: float) -> str:
     if confidence >= max(threshold - 0.2, 0.0):
         return "#d97706"
     return "#dc2626"
+
+
+def _score_color(confidence: float) -> str:
+    if confidence >= CONFIG.get("gui_score_green", 0.75):
+        return "#059669"
+    if confidence >= CONFIG.get("gui_score_amber", 0.50):
+        return "#d97706"
+    return "#dc2626"
+
+
+_JUDGE_CRITERIA = (
+    ("pertinenza", "Pertinenza"),
+    ("supporto_documenti", "Supporto documenti"),
+    ("completezza", "Completezza"),
+    ("sicurezza_clinica", "Sicurezza clinica"),
+)
+
+
+def _render_candidate_card(candidate: dict, evaluation: dict | None, badge: str, is_best: bool):
+    confidence = min(max(float(candidate.get("confidence", 0.0) or 0.0), 0.0), 1.0)
+    color = _score_color(confidence)
+    name = html.escape(str(candidate.get("diagnosis", "")))
+    motivation = html.escape(str(candidate.get("motivation", ""))).replace("\n", "<br>")
+    card_cls = "cand-card best" if is_best else "cand-card"
+    badge_cls = "cand-badge best" if is_best else "cand-badge"
+
+    parts = [
+        f'<div class="{card_cls}">',
+        '<div class="cand-head">',
+        f'<span class="{badge_cls}">{html.escape(badge)}</span>',
+        f'<span class="cand-name">{name}</span>',
+        f'<span class="cand-conf" style="color:{color}">{confidence:.0%}</span>',
+        "</div>",
+    ]
+
+    if motivation:
+        parts.append(f'<div class="cand-motiv">{motivation}</div>')
+
+    exams = candidate.get("exams") or []
+    if exams:
+        items = "".join(f"<li>{html.escape(str(exam))}</li>" for exam in exams)
+        parts.append(f'<div class="cand-sub">Esami consigliati</div><ul class="rec-list">{items}</ul>')
+
+    if evaluation:
+        parts.append('<div class="judge-grid">')
+        for key, label in _JUDGE_CRITERIA:
+            score = html.escape(str(evaluation.get(key, 0)))
+            parts.append(
+                f'<div class="judge-item"><span class="jl">{label}</span>'
+                f'<span class="jv">{score}</span></div>'
+            )
+        total = float(evaluation.get("total_score", 0.0) or 0.0)
+        parts.append(
+            '<div class="judge-item total"><span class="jl">Totale</span>'
+            f'<span class="jv">{total:.1f}</span></div>'
+        )
+        parts.append("</div>")
+        comment = html.escape(str(evaluation.get("commento", "")))
+        if comment:
+            parts.append(f'<div class="judge-comment">{comment}</div>')
+
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
+
+def _render_candidates(result: dict):
+    candidates = result.get("candidates") or []
+    if not candidates:
+        return
+    evaluations = {
+        int(evaluation.get("index", -1)): evaluation
+        for evaluation in (result.get("evaluations") or [])
+    }
+    best_index = int(result.get("best_index", 0) or 0)
+    if best_index < 0 or best_index >= len(candidates):
+        best_index = 0
+
+    def sort_key(index: int):
+        evaluation = evaluations.get(index) or {}
+        return (index != best_index, -(float(evaluation.get("total_score", 0.0) or 0.0)))
+
+    order = sorted(range(len(candidates)), key=sort_key)
+    st.markdown(
+        '<div class="section-label">Ipotesi diagnostiche a confronto</div>',
+        unsafe_allow_html=True,
+    )
+    candidate_no = 0
+    for index in order:
+        is_best = index == best_index
+        if is_best:
+            badge = "Migliore"
+        else:
+            candidate_no += 1
+            badge = f"Candidato {candidate_no}"
+        _render_candidate_card(candidates[index], evaluations.get(index), badge, is_best)
 
 
 def _render_report(result: dict):
@@ -454,17 +652,20 @@ def _render_report(result: dict):
             f"Ciclo di approfondimento {round_no} di {max_rounds} · soglia di confidenza {threshold:.0%}"
         )
 
-        diagnosis = html.escape(str(result.get("diagnosis", ""))).replace("\n", "<br>")
-        st.markdown(
-            f'<div class="diag-box"><strong>Diagnosi</strong><br>{diagnosis}</div>',
-            unsafe_allow_html=True,
-        )
-
-        recommendations = result.get("recommendations") or []
-        if recommendations:
-            st.markdown("**Cosa fare adesso**")
-            items = "".join(f"<li>{html.escape(str(r))}</li>" for r in recommendations)
-            st.markdown(f'<ul class="rec-list">{items}</ul>', unsafe_allow_html=True)
+        candidates = result.get("candidates") or []
+        if candidates:
+            _render_candidates(result)
+        else:
+            diagnosis = html.escape(str(result.get("diagnosis", ""))).replace("\n", "<br>")
+            st.markdown(
+                f'<div class="diag-box"><strong>Diagnosi</strong><br>{diagnosis}</div>',
+                unsafe_allow_html=True,
+            )
+            recommendations = result.get("recommendations") or []
+            if recommendations:
+                st.markdown("**Cosa fare adesso**")
+                items = "".join(f"<li>{html.escape(str(r))}</li>" for r in recommendations)
+                st.markdown(f'<ul class="rec-list">{items}</ul>', unsafe_allow_html=True)
 
         documents = result.get("retrieved_documents") or []
         if documents:
@@ -535,8 +736,9 @@ def _render_controls():
     elif state == "gcs":
         _render_gcs_options()
     elif state == "diagnose":
+        loader = st.empty()
         if st.button("Esegui diagnosi", type="primary", use_container_width=True, key="btn_diagnose"):
-            _handle_diagnose()
+            _handle_diagnose(loader)
     elif state == "followup":
         result = st.session_state["result"] or {}
         options = result.get("followup_options") or []
@@ -554,9 +756,31 @@ def _render_controls():
         if st.button("Sono soddisfatto · ferma la diagnosi", key="btn_stop", use_container_width=True):
             _handle_stop()
     else:
-        if st.button("Nuova diagnosi", use_container_width=True, key="btn_restart"):
-            start_session()
-            st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Nuova diagnosi", use_container_width=True, key="btn_restart"):
+                start_session()
+                st.rerun()
+        with col2:
+            if st.button("Aggiungi informazioni", use_container_width=True, key="btn_extra"):
+                st.session_state["show_extra_info"] = not st.session_state.get("show_extra_info", False)
+                st.rerun()
+        if st.session_state.get("show_extra_info"):
+            extra = st.text_area(
+                "Informazioni aggiuntive sul paziente",
+                key="extra_info_text",
+                height=110,
+                placeholder="Aggiungi referti, terapie in corso, sintomi osservati o altri dettagli utili.",
+            )
+            if st.button(
+                "Invia informazioni",
+                type="primary",
+                use_container_width=True,
+                key="btn_send_extra",
+                disabled=not (extra or "").strip(),
+            ):
+                st.session_state["show_extra_info"] = False
+                _handle_followup(extra.strip())
 
 
 def render_sidebar() -> str:
@@ -579,7 +803,10 @@ def render_sidebar() -> str:
         st.markdown("**Backend**")
         st.caption(f"{API_URL}")
         st.markdown("**Modelli**")
-        st.caption("OCR vision + gemma3:1b + nomic-embed-text")
+        st.caption(
+            f"OCR {CONFIG.get('ocr_model', '?')} · LLM {CONFIG.get('llm_model', '?')} "
+            f"· embeddings {CONFIG.get('embedding_model', '?')}"
+        )
         st.divider()
         st.caption("Stack: ollama, qdrant, fastapi, langgraph")
     return view
@@ -594,7 +821,7 @@ def render_diagnosi():
         "paziente, finché la diagnosi è solida oppure decidi tu di fermarti.</p></div>",
         unsafe_allow_html=True,
     )
-    render_steps()
+    st.markdown(_steps_html(), unsafe_allow_html=True)
     render_chat()
     _render_controls()
 

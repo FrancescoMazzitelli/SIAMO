@@ -47,17 +47,21 @@ src/
 │   └── document_processor.py  #   orchestrazione della pipeline di ingest
 ├── rag/                       # COMPONENTE: retrieval
 │   ├── vector_store.py        #   indicizzazione gerarchica in Qdrant
-│   └── hierarchical_retriever.py  # chunk hit -> paragrafi genitore completi
+│   ├── qdrant_utils.py        #   id deterministici + query_points
+│   └── hierarchical_retriever.py  # due livelli (riassunti -> chunk), paragrafi + rerank LLM
 ├── llm/                       # COMPONENTE: integrazione LLM (testo)
 ├── core/                      # config + modelli di dominio
-└── prompts/italy.py           # prompt in italiano (GCS, RAG, diagnosi, OCR)
+└── prompts/italy.py           # prompt in italiano (GCS, RAG, diagnosi, giudice, rerank)
 
 gui/                           # COMPONENTE: GUI Streamlit (porta 8501)
 ├── app.py                     #   UI in italiano (diagnosi + gestione documenti)
 ├── Dockerfile
 └── requirements.txt
 
+run_ingestion.py               # ingest batch da riga di comando
 synthetic_data/                # casi clinici sintetici, ingeriti in automatico
+config/settings.toml           # configurazione esterna (fonte unica dei parametri)
+scripts/pull_models.py         # scarica i modelli dichiarati nella configurazione
 ```
 
 ## Pipeline di ingest dei documenti
@@ -75,17 +79,30 @@ JPG ──┤
       proseguire anche oltre il salto pagina
                         │
                         ▼
-      chunker: paragrafo -> chunk (max 500 char, overlap 50)
+      chunker: paragrafo -> chunk (max 800 char, overlap 200)
                         │
                         ▼
       LLM gemma3:1b: riassunto del documento
                         │
                         ▼
-      Qdrant: 3 livelli indicizzati (documento / paragrafo / chunk)
+      Qdrant: 3 livelli indicizzati (documento / paragrafo / chunk), id
+      deterministici (upsert idempotente) e indici payload keyword
+      (doc_id / level / paragraph_id / parent_id)
 ```
 
-La ricerca RAG colpisce i **chunk** ma restituisce i **paragrafi completi**
-genitore (recupero gerarchico).
+La ricerca RAG lavora in due passaggi: prima confronta la query con i
+**riassunti** dei documenti e seleziona i più rilevanti, poi cerca i **chunk**
+più pertinenti solo dentro quei documenti, li riconduce ai **paragrafi completi**
+genitore e li fa **rerankare al LLM**, tenendo i paragrafi con punteggio più alto.
+
+## Ingest batch da riga di comando
+
+`run_ingestion.py` indicizza un'intera cartella con la stessa pipeline dell'API:
+
+```bash
+python run_ingestion.py                 # indicizza synthetic_data/
+python run_ingestion.py --dir docs --force
+```
 
 ## Auto-ingest di synthetic_data
 
@@ -100,11 +117,22 @@ deterministico dal filename) vengono saltati ai riavvii successivi.
 
 ```
 collect_description -> ask_gcs (3 domande: E/V/M) -> build_rag_query
-   -> retrieve_documents (gerarchico) -> generate_diagnosis
+   -> retrieve_documents (2 livelli: riassunti -> chunk, poi rerank LLM)
+   -> generate_diagnosis (5 ipotesi) -> evaluate_candidates (LLM-as-Judge, 4 criteri)
    -> confidenza < soglia: generate_followup_question -> risposta utente
       -> build_rag_query ... (nuovo ciclo)
    -> confidenza >= soglia / stop utente / max cicli: END
 ```
+
+Il nodo di generazione produce **cinque ipotesi diagnostiche** differenziate, ognuna
+con nome della condizione, confidenza, motivazione basata sui documenti ed esami
+consigliati. Per evitare ipotesi ripetute, le diagnosi uguali o troppo simili vengono
+scartate e, quando servono altre ipotesi, il sistema le genera fondandole su **documenti
+diversi** (uno per ipotesi, escludendo i documenti già usati e le diagnosi già proposte).
+Il nodo **LLM-as-Judge** assegna a ogni ipotesi quattro punteggi
+indipendenti (pertinenza, supporto documenti, completezza, sicurezza clinica); la
+media più alta individua la diagnosi migliore, che diventa la diagnosi principale
+mostrata (le cinque restano disponibili nella risposta API).
 
 Se dopo la diagnosi la confidenza è inferiore alla soglia, il sistema formula da solo
 una domanda semplice e osservabile, pensata per chi non è medico (per esempio far
@@ -112,8 +140,41 @@ sorridere il paziente, alzare entrambe le braccia, parlare, seguire un oggetto c
 occhi), con alcune risposte rapide tra cui scegliere. Ogni risposta viene integrata nel
 contesto (query RAG e prompt di diagnosi) e la diagnosi viene riformulata con una nuova
 confidenza. Il ciclo si chiude quando: la confidenza raggiunge la soglia
-(`CONFIDENCE_THRESHOLD`, default 0.7), l'utente ferma l'approfondimento, oppure si
-raggiunge il numero massimo di cicli (`MAX_FOLLOWUP_ROUNDS`, default 4).
+(`confidence_threshold`, default 0.7), l'utente ferma l'approfondimento, oppure si
+raggiunge il numero massimo di cicli (`max_followup_rounds`, default 4).
+
+## Configurazione
+
+Tutti i parametri (modelli, URL dei servizi, chunking, retrieval, soglie, API e
+GUI) vivono in **`config/settings.toml`**: e' la fonte unica, modificabile senza
+toccare il codice ne' `docker-compose.yml`.
+
+```toml
+# modelli
+embedding_model = "nomic-embed-text"
+llm_model = "gemma3:1b"
+ocr_model = "maternion/LightOnOCR-2:1b"
+
+# retrieval
+top_k_documents = 5
+context_top_k = 5
+
+# diagnosi
+candidate_count = 5
+confidence_threshold = 0.7
+max_followup_rounds = 4
+```
+
+- Il servizio `ollama-setup` legge lo stesso file (`scripts/pull_models.py`) e
+  scarica i modelli dichiarati: per cambiare modello basta modificare
+  `config/settings.toml`.
+- Se cambi `embedding_model` aggiorna anche `embedding_dimension` (768 per
+  `nomic-embed-text`) e ricrea la collezione Qdrant.
+- Le variabili d'ambiente con lo stesso nome (maiuscolo) hanno **priorita'** sul
+  file: utili per override temporanei. Il percorso del file si cambia con
+  `SIAMO_CONFIG_FILE`.
+- `.env.example` elenca gli override piu' comuni (es. esecuzione in locale su
+  `localhost` invece dei nomi dei container).
 
 ## Avvio
 
@@ -131,8 +192,14 @@ Dopo l'avvio dello stack, la GUI è su **http://localhost:8501**:
   domande GCS (pulsanti di risposta) → esecuzione diagnosi. Se la confidenza non basta,
   il sistema prosegue con domande semplici e osservabili con risposte rapide
   selezionabili: rispondi finché vuoi, oppure premi **Sono soddisfatto · ferma la diagnosi**
-  per chiudere quando preferisci. Ogni ciclo riformula la diagnosi e aggiorna la confidenza;
-  il report mostra GCS, gravità, confidenza, cosa fare adesso e fonti consultate
+  per chiudere quando preferisci. Ogni ciclo riformula le ipotesi e aggiorna la confidenza;
+  il report mostra GCS, gravità, confidenza, le **cinque ipotesi diagnostiche a confronto**
+  (la migliore in evidenza con badge **Migliore**, le altre come **Candidato N**, ognuna con
+  confidenza, motivazione, esami consigliati e la griglia di valutazione LLM-as-Judge su
+  pertinenza, supporto documenti, completezza e sicurezza clinica) e le fonti consultate.
+  L'header SIAMO resta ancorato in alto mentre scorre il contenuto. A diagnosi conclusa,
+  accanto a **Nuova diagnosi** trovi **Aggiungi informazioni** per integrare referti, terapie
+  o altri dettagli nella stessa sessione
 - sezione **Documenti**: upload di PDF/immagine/testo (ingest completo OCR +
   paragrafi + embeddings) oppure incolla testo e vedi il riassunto
 

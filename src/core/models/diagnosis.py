@@ -10,6 +10,23 @@ class RetrievedDocument(BaseModel):
     metadata: dict = Field(default_factory=dict)
 
 
+class DiagnosticCandidate(BaseModel):
+    diagnosis: str
+    confidence: float = 0.0
+    motivation: str = ""
+    exams: list[str] = Field(default_factory=list)
+
+
+class CandidateEvaluation(BaseModel):
+    index: int
+    pertinenza: int = 0
+    supporto_documenti: int = 0
+    completezza: int = 0
+    sicurezza_clinica: int = 0
+    total_score: float = 0.0
+    commento: str = ""
+
+
 class DiagnosisResult(BaseModel):
     session_id: str
     problem_description: str
@@ -19,6 +36,9 @@ class DiagnosisResult(BaseModel):
     diagnosis: str = ""
     confidence: float = 0.0
     recommendations: list[str] = Field(default_factory=list)
+    candidates: list[DiagnosticCandidate] = Field(default_factory=list)
+    evaluations: list[CandidateEvaluation] = Field(default_factory=list)
+    best_index: int = 0
     retrieved_documents: list[RetrievedDocument] = Field(default_factory=list)
     is_complete: bool = False
     needs_followup: bool = False

@@ -28,6 +28,7 @@ class ParagraphChunker:
         if len(text) <= self.max_chars:
             return [
                 ProcessedChunk(
+                    chunk_id=f"{paragraph_id}_c0",
                     text=text,
                     paragraph_id=paragraph_id,
                     doc_id=doc_id,
@@ -35,6 +36,7 @@ class ParagraphChunker:
                     metadata=HierarchicalMetadata(
                         doc_id=doc_id,
                         paragraph_id=paragraph_id,
+                        chunk_id=f"{paragraph_id}_c0",
                         level=Level.CHUNK,
                         paragraph_index=paragraph_index,
                         chunk_index=0,
@@ -51,6 +53,7 @@ class ParagraphChunker:
 
         def make_chunk(chunk_text: str, chunk_index: int) -> ProcessedChunk:
             return ProcessedChunk(
+                chunk_id=f"{paragraph_id}_c{chunk_index}",
                 text=chunk_text.strip(),
                 paragraph_id=paragraph_id,
                 doc_id=doc_id,
@@ -58,6 +61,7 @@ class ParagraphChunker:
                 metadata=HierarchicalMetadata(
                     doc_id=doc_id,
                     paragraph_id=paragraph_id,
+                    chunk_id=f"{paragraph_id}_c{chunk_index}",
                     level=Level.CHUNK,
                     paragraph_index=paragraph_index,
                     chunk_index=chunk_index,

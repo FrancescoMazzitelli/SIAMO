@@ -39,20 +39,16 @@ services:
       start_period: 20s
 
   ollama-setup:
-    image: curlimages/curl:latest
+    image: python:3.12-slim
     depends_on:
       ollama:
         condition: service_healthy
-    entrypoint: >
-      sh -c "
-        echo 'Pulling nomic-embed-text (embeddings)...' &&
-        curl -s http://ollama:11434/api/pull -d '{\"name\": \"nomic-embed-text\"}' &&
-        echo 'Pulling gemma3:1b (text generation)...' &&
-        curl -s http://ollama:11434/api/pull -d '{\"name\": \"gemma3:1b\"}' &&
-        echo 'Pulling maternion/LightOnOCR-2:1b (OCR vision model, ~1.5GB)...' &&
-        curl -s http://ollama:11434/api/pull -d '{\"name\": \"maternion/LightOnOCR-2:1b\"}' &&
-        echo 'Models ready.'
-      "
+    environment:
+      SIAMO_CONFIG_FILE: /config/settings.toml
+    volumes:
+      - ./config:/config:ro
+      - ./scripts:/scripts:ro
+    entrypoint: ["python", "/scripts/pull_models.py"]
 
   diagnosis-api:
     build: .
@@ -60,20 +56,7 @@ services:
       - "8080:8000"
     restart: unless-stopped
     environment:
-      OLLAMA_BASE_URL: http://ollama:11434
-      QDRANT_URL: http://qdrant:6333
-      QDRANT_COLLECTION_NAME: medical_knowledge
-      EMBEDDING_MODEL: nomic-embed-text
-      LLM_MODEL: gemma3:1b
-      EMBEDDING_DIMENSION: 768
-      OCR_MODEL: maternion/LightOnOCR-2:1b
-      OCR_TEMPERATURE: 0.1
-      OCR_MAX_TOKENS: 8192
-      OCR_MAX_LONGEST_EDGE: 1540
-      MIN_PARAGRAPH_CHARS: 80
-      CONFIDENCE_THRESHOLD: 0.7
-      MAX_FOLLOWUP_ROUNDS: 4
-      SYNTHETIC_DATA_DIR: synthetic_data
+      SIAMO_CONFIG_FILE: /config/settings.toml
     depends_on:
       ollama:
         condition: service_healthy
@@ -87,6 +70,7 @@ services:
       start_period: 20s
     volumes:
       - .:/app
+      - ./config:/config:ro
 
   streamlit-gui:
     build:
@@ -95,12 +79,13 @@ services:
     ports:
       - "8501:8501"
     environment:
-      SIAMO_API_URL: http://diagnosis-api:8000
+      SIAMO_CONFIG_FILE: /config/settings.toml
     depends_on:
       diagnosis-api:
         condition: service_healthy
     volumes:
       - ./gui:/app
+      - ./config:/config:ro
     restart: unless-stopped
 
 volumes:

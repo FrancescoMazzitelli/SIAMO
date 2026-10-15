@@ -52,5 +52,5 @@ class DocumentPageConverter:
             new_size = (round(image.width * scale), round(image.height * scale))
             image = image.resize(new_size)
         buffer = io.BytesIO()
-        image.save(buffer, format="JPEG", quality=85)
+        image.save(buffer, format="JPEG", quality=self.settings.jpeg_quality)
         return buffer.getvalue()

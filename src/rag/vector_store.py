@@ -6,14 +6,15 @@ from qdrant_client.models import (
     FieldCondition,
     Filter,
     MatchValue,
+    PayloadSchemaType,
 )
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
-import uuid
 import structlog
 
 from src.core.config import get_settings
 from src.core.models.document import ProcessedDocument
+from src.rag.qdrant_utils import point_id, vector_search
 
 logger = structlog.get_logger()
 
@@ -45,6 +46,19 @@ class VectorStoreService:
                 "collection_created",
                 name=self.settings.qdrant_collection_name,
             )
+        self._ensure_payload_indexes()
+
+    def _ensure_payload_indexes(self):
+        """Keyword payload indices for doc_id, level, paragraph_id and parent_id."""
+        for field in ("doc_id", "level", "paragraph_id", "parent_id"):
+            try:
+                self.client.create_payload_index(
+                    collection_name=self.settings.qdrant_collection_name,
+                    field_name=field,
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
+            except Exception as e:
+                logger.warning("payload_index_skipped", field=field, error=str(e))
 
     def _embed(self, text: str) -> list[float]:
         return self.embeddings.embed_query(text)
@@ -66,13 +80,14 @@ class VectorStoreService:
         doc_payload = {
             "text": doc.summary,
             "doc_id": doc.doc_id,
+            "parent_id": "",
             "doc_summary": doc.summary,
             "level": "document",
             "filename": doc.filename,
         }
         points.append(
             PointStruct(
-                id=str(uuid.uuid4()),
+                id=point_id(doc.doc_id),
                 vector=doc_vector,
                 payload=doc_payload,
             )
@@ -85,14 +100,16 @@ class VectorStoreService:
                 "full_text": paragraph.full_text,
                 "doc_id": doc.doc_id,
                 "paragraph_id": paragraph.paragraph_id,
+                "parent_id": doc.doc_id,
                 "paragraph_index": paragraph.paragraph_index,
                 "page": paragraph.page_index,
                 "doc_summary": doc.summary,
+                "filename": doc.filename,
                 "level": "paragraph",
             }
             points.append(
                 PointStruct(
-                    id=str(uuid.uuid4()),
+                    id=point_id(paragraph.paragraph_id),
                     vector=para_vector,
                     payload=para_payload,
                 )
@@ -104,21 +121,23 @@ class VectorStoreService:
                     "text": chunk.text,
                     "doc_id": doc.doc_id,
                     "paragraph_id": paragraph.paragraph_id,
+                    "parent_id": paragraph.paragraph_id,
                     "chunk_id": chunk.chunk_id,
                     "chunk_index": chunk.chunk_index,
                     "page": paragraph.page_index,
                     "doc_summary": doc.summary,
+                    "filename": doc.filename,
                     "level": "chunk",
                 }
                 points.append(
                     PointStruct(
-                        id=str(uuid.uuid4()),
+                        id=point_id(chunk.chunk_id),
                         vector=chunk_vector,
                         payload=chunk_payload,
                     )
                 )
 
-        batch_size = 100
+        batch_size = self.settings.qdrant_batch_size
         for i in range(0, len(points), batch_size):
             batch = points[i : i + batch_size]
             self.client.upsert(
@@ -135,18 +154,42 @@ class VectorStoreService:
         logger.info("hierarchical_document_indexed", **stats)
         return stats
 
+    def similarity_search(self, query: str, k: int | None = None) -> list[Document]:
+        """Flat vector search fallback over all indexed points."""
+        limit = k or self.settings.context_top_k
+        vector = self._embed(query)
+        hits = vector_search(
+            self.client,
+            self.settings.qdrant_collection_name,
+            vector,
+            limit,
+        )
+        documents = []
+        for hit in hits:
+            payload = hit.payload or {}
+            content = payload.get("full_text") or payload.get("text", "")
+            metadata = {
+                key: value
+                for key, value in payload.items()
+                if key not in ("text", "full_text", "doc_summary")
+            }
+            metadata["retrieval_score"] = hit.score
+            metadata.setdefault("source", payload.get("doc_id", "unknown"))
+            documents.append(Document(page_content=content, metadata=metadata))
+        return documents
+
     def add_documents(self, documents: list[Document]) -> list[str]:
         points = []
         for doc in documents:
             vector = self._embed(doc.page_content)
             points.append(
                 PointStruct(
-                    id=str(uuid.uuid4()),
+                    id=point_id(doc.page_content),
                     vector=vector,
                     payload={**doc.metadata, "text": doc.page_content},
                 )
             )
-        batch_size = 100
+        batch_size = self.settings.qdrant_batch_size
         ids = []
         for i in range(0, len(points), batch_size):
             batch = points[i : i + batch_size]
