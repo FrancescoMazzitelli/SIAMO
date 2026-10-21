@@ -3,8 +3,11 @@ from collections import OrderedDict
 
 from src.application.workflow.state import GraphState
 from src.prompts.italy import (
-    GCS_QUESTIONS,
+    CASE_CATEGORIES,
+    CASE_CATEGORY_LINES,
     RAG_QUERY_BUILDER_PROMPT,
+    TRANSLATE_PROMPT,
+    TRIAGE_PROMPT,
     DIAGNOSIS_PROMPT,
     DIAGNOSIS_SINGLE_PROMPT,
     JUDGE_PROMPT,
@@ -32,13 +35,97 @@ class GraphNodes:
         self.llm = llm
         self.retriever = retriever
 
-    def collect_description(self, state: GraphState) -> GraphState:
-        logger.info("node_collect_description", session=state["session_id"])
+    async def assess_case(self, state: GraphState) -> GraphState:
+        logger.info("node_assess_case", session=state["session_id"])
+        description = state.get("problem_description", "")
+        if not self.settings.auto_gcs_triage:
+            key = "neuro"
+            return {
+                **state,
+                "case_category_key": key,
+                "case_category": CASE_CATEGORIES[key],
+                "requires_gcs": True,
+                "triage_reasoning": "Valutazione con la Glasgow Coma Scale.",
+                "phase": "questionnaire",
+            }
+        prompt = TRIAGE_PROMPT.format(
+            problem_description=description,
+            categories=CASE_CATEGORY_LINES,
+        )
+        data = await self.llm.generate_json(
+            "Sei un medico di bordo. Rispondi solo in JSON valido.", prompt
+        )
+        key = str(data.get("category") or "").strip().lower()
+        if key not in CASE_CATEGORIES:
+            key = "other"
+        requires_gcs = self._to_bool(data.get("requires_gcs")) or key == "neuro"
+        reason = str(data.get("reason") or "").strip()
+        logger.info(
+            "node_triage",
+            session=state["session_id"],
+            category=key,
+            requires_gcs=requires_gcs,
+        )
         return {
             **state,
+            "case_category_key": key,
+            "case_category": CASE_CATEGORIES[key],
+            "requires_gcs": requires_gcs,
+            "triage_reasoning": reason,
             "phase": "questionnaire",
-            "current_question_index": 0,
         }
+
+    @staticmethod
+    def _to_bool(value) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "1", "yes", "si", "sì"}
+        return bool(value)
+
+    def _case_text(self, state: GraphState) -> str:
+        lines = [
+            f"Descrizione del problema: {state.get('problem_description', '').strip() or 'Non fornita'}",
+            f"Categoria sospetta: {state.get('case_category') or 'Altro'}",
+        ]
+        if state.get("requires_gcs") and state.get("gcs_total", 0) > 0:
+            lines.append(
+                "Glasgow Coma Scale: "
+                f"{state.get('gcs_total', 0)}/15 "
+                f"(apertura oculare {state.get('gcs_eye', 0)}, "
+                f"verbale {state.get('gcs_verbal', 0)}, "
+                f"motoria {state.get('gcs_motor', 0)}), "
+                f"gravita {state.get('gcs_severity', 'unknown')}"
+            )
+        answers = state.get("question_answers", {})
+        answer_lines = []
+        for question in state.get("active_questions", []):
+            question_id = question.get("id")
+            if question_id in answers:
+                options = question.get("options", {})
+                label = options.get(answers[question_id], str(answers[question_id]))
+                answer_lines.append(f"- {question.get('text', '')} Risposta: {label}")
+        if answer_lines:
+            lines.append("Risposte alle domande:")
+            lines.extend(answer_lines)
+        lines.append("Informazioni aggiuntive dal dialogo:")
+        lines.append(self._format_followup(state))
+        return "\n".join(lines)
+
+    async def translate_case(self, state: GraphState) -> GraphState:
+        case_text = self._case_text(state)
+        if not self.settings.translate_input_to_english:
+            return {**state, "case_summary_en": case_text}
+        prompt = TRANSLATE_PROMPT.format(case_text=case_text)
+        english = await self.llm.generate(
+            "Sei un traduttore medico. Rispondi solo con la traduzione in inglese.",
+            prompt,
+        )
+        english = english.strip() or case_text
+        logger.info(
+            "node_translate_case", session=state["session_id"], chars=len(english)
+        )
+        return {**state, "case_summary_en": english}
 
     @staticmethod
     def _format_followup(state: GraphState) -> str:
@@ -55,33 +142,26 @@ class GraphNodes:
                 lines.append(f"- Informazione aggiuntiva: {answer}")
         return "\n".join(lines)
 
-    def ask_gcs_question(self, state: GraphState) -> GraphState:
+    def process_answer(self, state: GraphState, answer: int) -> GraphState:
+        questions = state.get("active_questions", [])
         idx = state.get("current_question_index", 0)
-        if idx >= len(GCS_QUESTIONS):
-            return {**state, "phase": "rag"}
-        question = GCS_QUESTIONS[idx]
-        logger.info("node_ask_gcs", question_id=question["id"], index=idx)
-        return state
-
-    def process_gcs_answer(self, state: GraphState, answer: int) -> GraphState:
-        idx = state.get("current_question_index", 0)
-        if idx >= len(GCS_QUESTIONS):
+        if idx >= len(questions):
             return {**state, "phase": "rag"}
 
-        question = GCS_QUESTIONS[idx]
-        new_answers = {**state.get("gcs_answers", {}), question["id"]: answer}
+        question = questions[idx]
+        answers = {**state.get("question_answers", {}), question["id"]: answer}
         new_index = idx + 1
 
-        gcs_total = 0
-        gcs_severity = "unknown"
-        gcs_eye = 0
-        gcs_verbal = 0
-        gcs_motor = 0
+        gcs_total = state.get("gcs_total", 0)
+        gcs_severity = state.get("gcs_severity", "unknown")
+        gcs_eye = state.get("gcs_eye", 0)
+        gcs_verbal = state.get("gcs_verbal", 0)
+        gcs_motor = state.get("gcs_motor", 0)
 
-        if all(k in new_answers for k in ["eye", "verbal", "motor"]):
-            gcs_eye = new_answers["eye"]
-            gcs_verbal = new_answers["verbal"]
-            gcs_motor = new_answers["motor"]
+        if all(key in answers for key in ("eye", "verbal", "motor")):
+            gcs_eye = int(answers["eye"])
+            gcs_verbal = int(answers["verbal"])
+            gcs_motor = int(answers["motor"])
             gcs_total = gcs_eye + gcs_verbal + gcs_motor
             if gcs_total <= 8:
                 gcs_severity = "grave"
@@ -90,11 +170,18 @@ class GraphNodes:
             else:
                 gcs_severity = "lieve"
 
-        next_phase = "questionnaire" if new_index < len(GCS_QUESTIONS) else "rag"
+        next_phase = "questionnaire" if new_index < len(questions) else "rag"
+
+        logger.info(
+            "node_process_answer",
+            session=state["session_id"],
+            question_id=question["id"],
+            index=idx,
+        )
 
         return {
             **state,
-            "gcs_answers": new_answers,
+            "question_answers": answers,
             "current_question_index": new_index,
             "gcs_total": gcs_total,
             "gcs_severity": gcs_severity,
@@ -107,16 +194,12 @@ class GraphNodes:
     async def build_rag_query(self, state: GraphState) -> GraphState:
         logger.info("node_build_rag_query", session=state["session_id"])
         prompt = RAG_QUERY_BUILDER_PROMPT.format(
-            problem_description=state.get("problem_description", ""),
-            gcs_total=state.get("gcs_total", 0),
-            gcs_severity=state.get("gcs_severity", "unknown"),
-            gcs_eye=state.get("gcs_eye", 0),
-            gcs_verbal=state.get("gcs_verbal", 0),
-            gcs_motor=state.get("gcs_motor", 0),
-            additional_information=self._format_followup(state),
+            category=state.get("case_category", "Altro"),
+            case_summary=state.get("case_summary_en", "")
+            or state.get("problem_description", ""),
         )
         query = await self.llm.generate(
-            "Sei un assistente che converte dati clinici in query di ricerca mediche. "
+            "Sei un assistente che scrive query di ricerca in inglese. "
             "Restituisci solo la query, senza altro testo.",
             prompt,
         )
@@ -233,13 +316,9 @@ class GraphNodes:
 
     def _case_fields(self, state: GraphState) -> dict:
         return {
-            "problem_description": state.get("problem_description", "Non fornito"),
-            "gcs_total": state.get("gcs_total", 0),
-            "gcs_severity": state.get("gcs_severity", "unknown"),
-            "gcs_eye": state.get("gcs_eye", 0),
-            "gcs_verbal": state.get("gcs_verbal", 0),
-            "gcs_motor": state.get("gcs_motor", 0),
-            "additional_information": self._format_followup(state),
+            "category": state.get("case_category", "Altro"),
+            "case_summary": state.get("case_summary_en", "")
+            or state.get("problem_description", "Non fornito"),
         }
 
     async def _diversify_candidates(
@@ -323,7 +402,7 @@ class GraphNodes:
 
         conf_prompt = CONFIDENCE_CALIBRATION_PROMPT.format(
             has_description="Si" if state.get("problem_description") else "No",
-            has_full_gcs="Si" if state.get("gcs_total", 0) > 0 else "No",
+            has_answers="Si" if state.get("question_answers") else "No",
             doc_count=len(context_docs),
         )
         calibration = await self.llm.generate_float(
@@ -377,9 +456,9 @@ class GraphNodes:
         )
 
         prompt = JUDGE_PROMPT.format(
-            problem_description=state.get("problem_description", "Non fornito"),
-            gcs_total=state.get("gcs_total", 0),
-            gcs_severity=state.get("gcs_severity", "unknown"),
+            category=state.get("case_category", "Altro"),
+            case_summary=state.get("case_summary_en", "")
+            or state.get("problem_description", "Non fornito"),
             context_documents=context_text,
             candidates=listing,
         )
@@ -486,11 +565,11 @@ class GraphNodes:
             asked = "Nessuna domanda precedente."
 
         prompt = FOLLOWUP_QUESTION_PROMPT.format(
-            problem_description=state.get("problem_description", "Non fornito"),
-            gcs_total=state.get("gcs_total", 0),
-            gcs_severity=state.get("gcs_severity", "unknown"),
+            category=state.get("case_category", "Altro"),
             diagnosis=state.get("diagnosis", "Non disponibile"),
             confidence=state.get("confidence", 0.0),
+            case_summary=state.get("case_summary_en", "")
+            or state.get("problem_description", "Non fornito"),
             asked_questions=asked,
         )
         data = await self.llm.generate_json(

@@ -6,8 +6,14 @@ from langchain_core.documents import Document
 class GraphState(TypedDict):
     session_id: str
     problem_description: str
+    case_category: str
+    case_category_key: str
+    requires_gcs: bool
+    triage_reasoning: str
+    case_summary_en: str
+    active_questions: list[dict]
     current_question_index: int
-    gcs_answers: dict[str, int]
+    question_answers: dict[str, int]
     gcs_total: int
     gcs_severity: str
     gcs_eye: int

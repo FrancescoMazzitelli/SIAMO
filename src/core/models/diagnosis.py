@@ -30,6 +30,12 @@ class CandidateEvaluation(BaseModel):
 class DiagnosisResult(BaseModel):
     session_id: str
     problem_description: str
+    category: str = ""
+    category_key: str = ""
+    requires_gcs: bool = False
+    triage_reasoning: str = ""
+    case_summary_en: str = ""
+    rag_query: str = ""
     gcs_score: Optional[GCSScore] = None
     gcs_total: int = 0
     gcs_severity: str = "unknown"

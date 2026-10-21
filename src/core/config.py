@@ -77,12 +77,18 @@ class Settings(BaseSettings):
     confidence_threshold: float = 0.7
     max_followup_rounds: int = 4
 
-    min_paragraph_chars: int = 80
+    min_paragraph_chars: int = 250
+    max_paragraph_chars: int = 1800
     chunk_max_chars: int = 800
     chunk_overlap: int = 200
-    synthetic_data_dir: str = "synthetic_data"
+    documents_dir: str = "data/documents"
+    pdf_prefer_text_layer: bool = False
+    pdf_text_min_chars_per_page: int = 200
     startup_poll_seconds: int = 5
     startup_timeout_seconds: int = 1800
+
+    translate_input_to_english: bool = True
+    auto_gcs_triage: bool = True
 
     api_host: str = "0.0.0.0"
     api_port: int = 8000

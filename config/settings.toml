@@ -25,12 +25,29 @@ qdrant_collection_name = "medical_knowledge"
 qdrant_batch_size = 100
 
 # --- Ingestione documenti -------------------------------------------------------------
-synthetic_data_dir = "synthetic_data"
-min_paragraph_chars = 80
+# Cartella dei manuali da indicizzare all'avvio (maritime medical guides, in inglese).
+documents_dir = "data/documents"
+# Un titolo Markdown (##, ###, ...) inizia sempre un nuovo paragrafo, cosi una sezione
+# e il suo contenuto restano insieme. I blocchi senza titolo vengono invece accorpati
+# finche non raggiungono questa soglia: serve solo al testo senza intestazioni.
+min_paragraph_chars = 250
+# Un paragrafo piu lungo di questo valore viene spezzato: il paragrafo genitore
+# recuperato dal retrieval deve restare contenuto nel contesto dell'LLM.
+max_paragraph_chars = 1800
 chunk_max_chars = 800
 chunk_overlap = 200
+# false = OCR su tutte le pagine (scelta attuale); true = usa il layer di testo
+# nativo dei PDF quando presente e ricorre all'OCR solo se il PDF e una scansione.
+pdf_prefer_text_layer = false
+pdf_text_min_chars_per_page = 200
 startup_poll_seconds = 5
 startup_timeout_seconds = 1800
+
+# --- Lingua e triage ------------------------------------------------------------------
+# Traduce il testo del caso in inglese prima della ricerca RAG (documenti in inglese).
+translate_input_to_english = true
+# L'LLM decide in autonomia se il caso richiede la Glasgow Coma Scale.
+auto_gcs_triage = true
 
 # --- Retrieval ------------------------------------------------------------------------
 top_k_documents = 5

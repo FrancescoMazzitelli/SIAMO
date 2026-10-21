@@ -1,4 +1,4 @@
-"""Background ingestion of the synthetic_data folder at application startup."""
+"""Background ingestion of the documents folder at application startup."""
 
 import asyncio
 import time
@@ -72,11 +72,11 @@ async def _wait_for_ollama_models() -> None:
             await asyncio.sleep(settings.startup_poll_seconds)
 
 
-async def ingest_synthetic_data() -> int:
+async def ingest_documents() -> int:
     settings = get_settings()
-    directory = Path(settings.synthetic_data_dir).expanduser()
+    directory = Path(settings.documents_dir).expanduser()
     if not directory.is_dir():
-        logger.warning("synthetic_data_dir_missing", path=str(directory))
+        logger.warning("documents_dir_missing", path=str(directory))
         return 0
 
     files = sorted(
@@ -85,12 +85,12 @@ async def ingest_synthetic_data() -> int:
         if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
     )
     logger.info(
-        "synthetic_data_ingestion_started",
+        "documents_ingestion_started",
         path=str(directory),
         file_count=len(files),
     )
     if not files:
-        logger.warning("synthetic_data_empty", path=str(directory))
+        logger.warning("documents_dir_empty", path=str(directory))
         return 0
 
     try:
@@ -102,7 +102,7 @@ async def ingest_synthetic_data() -> int:
     try:
         service = RAGDiagnosisService()
     except Exception:
-        logger.exception("synthetic_ingest_init_failed")
+        logger.exception("documents_ingest_init_failed")
         return 0
 
     ingested = 0
@@ -111,14 +111,14 @@ async def ingest_synthetic_data() -> int:
     for path in files:
         try:
             if service.vector_store.has_document(doc_id_for(path.name)):
-                logger.info("synthetic_document_already_indexed", filename=path.name)
+                logger.info("document_already_indexed", filename=path.name)
                 skipped += 1
                 continue
             data = path.read_bytes()
             result = await service.ingest_file(data, path.name)
             ingested += 1
             logger.info(
-                "synthetic_document_ingested",
+                "document_ingested",
                 filename=result.get("filename"),
                 doc_id=result.get("doc_id"),
                 paragraphs=result.get("paragraphs"),
@@ -127,10 +127,10 @@ async def ingest_synthetic_data() -> int:
             )
         except Exception:
             failed += 1
-            logger.exception("synthetic_document_failed", filename=path.name)
+            logger.exception("document_failed", filename=path.name)
 
     logger.info(
-        "synthetic_data_ingestion_done",
+        "documents_ingestion_done",
         ingested=ingested,
         skipped=skipped,
         failed=failed,

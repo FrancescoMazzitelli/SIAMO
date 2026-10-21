@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from langchain_core.documents import Document
 import structlog
@@ -5,16 +6,16 @@ import structlog
 from src.application.workflow.nodes import GraphNodes
 from src.rag.vector_store import VectorStoreService
 from src.llm.llm_service import LLMService
-from src.documents.document_processor import DocumentProcessor
+from src.documents.document_processor import DocumentProcessor, doc_id_for
 from src.rag.hierarchical_retriever import HierarchicalRetriever
-from src.core.models.gcs import GCSQuestionnaire
+from src.core.models.document import ProcessedParagraph
 from src.core.models.diagnosis import (
     DiagnosisResult,
     RetrievedDocument,
     DiagnosticCandidate,
     CandidateEvaluation,
 )
-from src.prompts.italy import GCS_QUESTIONS
+from src.prompts.italy import GCS_QUESTIONS, CATEGORY_QUESTIONS
 from src.core.config import get_settings
 
 logger = structlog.get_logger()
@@ -22,7 +23,7 @@ logger = structlog.get_logger()
 
 class RAGDiagnosisService:
     """Application logic: orchestrates sessions, document ingestion and the
-    GCS questionnaire -> RAG -> diagnosis flow."""
+    triage -> questionnaire -> RAG -> diagnosis flow."""
 
     def __init__(self):
         self.settings = get_settings()
@@ -39,7 +40,13 @@ class RAGDiagnosisService:
             "session_id": session_id,
             "phase": "description",
             "problem_description": "",
-            "gcs_answers": {},
+            "case_category": "",
+            "case_category_key": "",
+            "requires_gcs": False,
+            "triage_reasoning": "",
+            "case_summary_en": "",
+            "active_questions": [],
+            "question_answers": {},
             "current_question_index": 0,
             "gcs_total": 0,
             "gcs_severity": "unknown",
@@ -68,56 +75,78 @@ class RAGDiagnosisService:
             "confidence_threshold": self.settings.confidence_threshold,
         }
         message = (
-            "Benvenuto nel sistema di valutazione clinica. "
-            "Descrivi brevemente il problema medico del paziente."
+            "Benvenuto nel sistema di diagnosi medica di bordo. "
+            "Descrivi il problema del paziente per iniziare la valutazione."
         )
         logger.info("session_started", session_id=session_id)
         return session_id, message
 
-    def set_description(self, session_id: str, description: str) -> dict:
+    async def set_description(self, session_id: str, description: str) -> dict:
         if session_id not in self.sessions:
             raise ValueError("Sessione non trovata")
-        self.sessions[session_id]["problem_description"] = description
-        self.sessions[session_id]["phase"] = "questionnaire"
-        self.sessions[session_id]["current_question_index"] = 0
-        question = GCS_QUESTIONS[0]
+
+        state = {**self.sessions[session_id], "problem_description": description}
+        state = await self.graph_nodes.assess_case(state)
+
+        if state.get("requires_gcs"):
+            questions = GCS_QUESTIONS
+        else:
+            category_key = state.get("case_category_key", "other")
+            questions = CATEGORY_QUESTIONS.get(category_key) or CATEGORY_QUESTIONS["other"]
+
+        state = {
+            **state,
+            "active_questions": questions,
+            "question_answers": {},
+            "current_question_index": 0,
+            "phase": "questionnaire" if questions else "rag",
+        }
+        self.sessions[session_id].update(state)
+
+        first = questions[0] if questions else None
         return {
             "session_id": session_id,
-            "current_step": 1,
-            "total_steps": len(GCS_QUESTIONS),
-            "question": question["text"],
-            "options": question["options"],
-            "is_complete": False,
+            "requires_gcs": state.get("requires_gcs", False),
+            "category": state.get("case_category", ""),
+            "category_key": state.get("case_category_key", ""),
+            "triage_reasoning": state.get("triage_reasoning", ""),
+            "current_step": 1 if questions else 0,
+            "total_steps": len(questions),
+            "question": first["text"] if first else "",
+            "options": first["options"] if first else {},
+            "is_complete": not questions,
         }
 
     def submit_answer(self, session_id: str, answer: int) -> dict:
         if session_id not in self.sessions:
             raise ValueError("Sessione non trovata")
         state = self.sessions[session_id]
-        new_state = self.graph_nodes.process_gcs_answer(state, answer)
+        new_state = self.graph_nodes.process_answer(state, answer)
         self.sessions[session_id].update(new_state)
 
+        questions = self.sessions[session_id].get("active_questions", [])
         idx = self.sessions[session_id]["current_question_index"]
-        if idx < len(GCS_QUESTIONS):
-            question = GCS_QUESTIONS[idx]
+        if idx < len(questions):
+            question = questions[idx]
             return {
                 "session_id": session_id,
                 "current_step": idx + 1,
-                "total_steps": len(GCS_QUESTIONS),
+                "total_steps": len(questions),
                 "question": question["text"],
                 "options": question["options"],
                 "is_complete": False,
             }
         return {
             "session_id": session_id,
-            "current_step": len(GCS_QUESTIONS),
-            "total_steps": len(GCS_QUESTIONS),
+            "current_step": len(questions),
+            "total_steps": len(questions),
             "question": "",
             "options": {},
             "is_complete": True,
         }
 
     async def _run_pipeline(self, state: dict) -> dict:
+        state = await self.graph_nodes.translate_case(state)
         state = await self.graph_nodes.build_rag_query(state)
         state = await self.graph_nodes.retrieve_documents(state)
         state = await self.graph_nodes.generate_diagnosis(state)
@@ -160,6 +189,12 @@ class RAGDiagnosisService:
         return DiagnosisResult(
             session_id=state["session_id"],
             problem_description=state.get("problem_description", ""),
+            category=state.get("case_category", ""),
+            category_key=state.get("case_category_key", ""),
+            requires_gcs=state.get("requires_gcs", False),
+            triage_reasoning=state.get("triage_reasoning", ""),
+            case_summary_en=state.get("case_summary_en", ""),
+            rag_query=state.get("rag_query", ""),
             gcs_total=state.get("gcs_total", 0),
             gcs_severity=state.get("gcs_severity", "unknown"),
             diagnosis=state.get("diagnosis", ""),
@@ -241,16 +276,35 @@ class RAGDiagnosisService:
         return self._build_result(state)
 
     async def ingest_file(self, file_bytes: bytes, filename: str) -> dict:
-        doc = await self.doc_processor.process_document(file_bytes, filename)
-        stats = self.vector_store.index_hierarchical_document(doc)
-        return {
+        doc_id = doc_id_for(filename)
+
+        async def index_paragraph(paragraph: ProcessedParagraph) -> None:
+            await asyncio.to_thread(
+                self.vector_store.index_paragraph, doc_id, filename, paragraph
+            )
+
+        doc = await self.doc_processor.process_document(
+            file_bytes, filename, on_paragraph=index_paragraph
+        )
+        await asyncio.to_thread(
+            self.vector_store.index_document, doc_id, filename, doc.summary
+        )
+        stats = {
             "filename": filename,
             "doc_id": doc.doc_id,
             "summary": doc.summary,
             "paragraphs": doc.total_paragraphs,
             "chunks": doc.total_chunks,
-            **stats,
+            "total_points": doc.total_paragraphs + doc.total_chunks + 1,
         }
+        logger.info(
+            "file_ingested",
+            doc_id=doc.doc_id,
+            paragraphs=doc.total_paragraphs,
+            chunks=doc.total_chunks,
+            total_points=stats["total_points"],
+        )
+        return stats
 
     def ingest_texts(self, texts: list[str], metadatas: list[dict] | None = None):
         docs = [

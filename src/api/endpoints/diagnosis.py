@@ -54,7 +54,7 @@ async def start_diagnosis(req: StartRequest | None = None):
 async def set_description(session_id: str, req: DescriptionRequest):
     try:
         service = get_service()
-        result = service.set_description(session_id, req.description)
+        result = await service.set_description(session_id, req.description)
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

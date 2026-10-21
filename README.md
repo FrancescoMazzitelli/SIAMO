@@ -1,8 +1,13 @@
 # SIAMO
 
-Sistema di diagnosi medica RAG con questionario **Glasgow Coma Scale (GCS)** come
-entry-point per la raccolta informazioni. Containerizzato, architettura a
-microservizi REST, un'unica GPU (NVIDIA GTX 1650, 4GB VRAM).
+Sistema di diagnosi medica di bordo basato su **RAG**. L'utente descrive il caso
+in italiano; il sistema ne riconosce la **categoria clinica** (traumi, cardiologia,
+gastroenterologia, infezioni, neurologia, respiratorio, dermatologia, altro) e
+decide da solo se serve la **Glasgow Coma Scale (GCS)** oppure qualche domanda
+mirata. La descrizione del caso viene **tradotta in inglese** per interrogare i
+manuali di soccorso marittimo (in inglese), mentre tutte le risposte del modello
+restano in **italiano**. Containerizzato, architettura a microservizi REST,
+un'unica GPU (NVIDIA GTX 1650, 4GB VRAM).
 
 ## Architettura
 
@@ -37,12 +42,12 @@ src/
 │   └── endpoints/diagnosis.py
 ├── application/               # logica dell'app: orchestrazione sessioni + workflow
 │   ├── rag_service.py         #   RAGDiagnosisService (sessioni, ingest, diagnosi)
-│   ├── startup_ingest.py      #   ingestione automatica di synthetic_data/ all'avvio
+│   ├── startup_ingest.py      #   ingestione automatica di data/documents/ all'avvio
 │   └── workflow/              #   LangGraph: state, nodes, workflow
 ├── documents/                 # COMPONENTE: management dei documenti
-│   ├── pdf_converter.py       #   PDF -> pagine JPG (1540px lato lungo)
+│   ├── pdf_converter.py       #   PDF -> pagine JPG in streaming (1540px lato lungo)
 │   ├── ocr_service.py         #   vision model via Ollama /api/chat -> markdown
-│   ├── markdown_splitter.py   #   markdown -> paragrafi (regola: titoli #)
+│   ├── markdown_splitter.py   #   testo -> paragrafi (titoli # e righe vuote)
 │   ├── chunker.py             #   paragrafo -> chunk con overlap
 │   └── document_processor.py  #   orchestrazione della pipeline di ingest
 ├── rag/                       # COMPONENTE: retrieval
@@ -51,7 +56,7 @@ src/
 │   └── hierarchical_retriever.py  # due livelli (riassunti -> chunk), paragrafi + rerank LLM
 ├── llm/                       # COMPONENTE: integrazione LLM (testo)
 ├── core/                      # config + modelli di dominio
-└── prompts/italy.py           # prompt in italiano (GCS, RAG, diagnosi, giudice, rerank)
+└── prompts/italy.py           # prompt in italiano (triage, traduzione, RAG, diagnosi, giudice, rerank)
 
 gui/                           # COMPONENTE: GUI Streamlit (porta 8501)
 ├── app.py                     #   UI in italiano (diagnosi + gestione documenti)
@@ -59,7 +64,7 @@ gui/                           # COMPONENTE: GUI Streamlit (porta 8501)
 └── requirements.txt
 
 run_ingestion.py               # ingest batch da riga di comando
-synthetic_data/                # casi clinici sintetici, ingeriti in automatico
+data/documents/                # manuali di soccorso in inglese, ingeriti in automatico
 config/settings.toml           # configurazione esterna (fonte unica dei parametri)
 scripts/pull_models.py         # scarica i modelli dichiarati nella configurazione
 ```
@@ -68,27 +73,45 @@ scripts/pull_models.py         # scarica i modelli dichiarati nella configurazio
 
 ```
 PDF ──┐
-      ├─► pdf_converter: pagine -> JPEG (lato lungo 1540px, aspetto invariato)
+      ├─► pdf_converter: pagine -> JPEG in streaming (lato lungo 1540px)
 JPG ──┤
       └─► ocr_service: ogni pagina -> maternion/LightOnOCR-2:1b -> Markdown
                         │
                         ▼
-      markdown_splitter: accumula il testo finché non incontra un titolo di
-      qualsiasi livello (#, ##, ###, ####, #####, ######); il titolo chiude il
-      paragrafo corrente e ne apre uno nuovo (titolo incluso). Un paragrafo può
-      proseguire anche oltre il salto pagina
+      page_furniture: toglie l'intestazione corrente in cima a ogni pagina
+      (es. "Chapter 1 FIRST AID 21", "International Medical Guide for Ships") e il
+      numero di pagina in fondo, cosi non finiscono incollati ai paragrafi
+                        │
+                        ▼
+      markdown_splitter: un titolo Markdown (##, ###, ...) inizia sempre un nuovo
+      paragrafo, quindi una sezione e il suo contenuto restano insieme; i blocchi
+      senza titolo vengono accorpati fino a min_paragraph_chars e i paragrafi oltre
+      max_paragraph_chars vengono spezzati, cosi il paragrafo genitore recuperato
+      dal retrieval entra sempre nel contesto del LLM
+                        │
+                        ▼
+      ogni paragrafo viene indicizzato SU QDRANT APPENA SI CHIUDE (in streaming,
+      mentre le pagine successive sono ancora in OCR): embedding del paragrafo e
+      dei suoi chunk -> upsert immediato (memoria costante, avanzamento visibile)
                         │
                         ▼
       chunker: paragrafo -> chunk (max 800 char, overlap 200)
                         │
                         ▼
-      LLM gemma3:1b: riassunto del documento
-                        │
-                        ▼
-      Qdrant: 3 livelli indicizzati (documento / paragrafo / chunk), id
-      deterministici (upsert idempotente) e indici payload keyword
-      (doc_id / level / paragraph_id / parent_id)
+      LLM gemma3:1b: riassunto del documento (in inglese, per il retrieval),
+      scritto come punto di livello documento SOLO alla fine (has_document)
 ```
+
+I due manuali di soccorso marittimo in inglese (`data/documents/`) hanno un text
+layer nativo: con `pdf_prefer_text_layer = true` il testo viene estratto
+direttamente e l'OCR serve solo per le pagine scansionate. Con il valore di default
+(`false`) ogni pagina passa comunque dall'OCR, come richiesto.
+
+Il punto di **livello documento** (il riassunto) viene scritto per ultimo: finché
+non c'è, il documento non compare nella ricerca di livello 1, quindi eventuali
+punti parziali di un ingest interrotto restano inerti. Ai riavvii successivi il
+documento viene rifatto da capo (gli id sono deterministici, quindi l'upsert è
+idempotente).
 
 La ricerca RAG lavora in due passaggi: prima confronta la query con i
 **riassunti** dei documenti e seleziona i più rilevanti, poi cerca i **chunk**
@@ -100,29 +123,48 @@ genitore e li fa **rerankare al LLM**, tenendo i paragrafi con punteggio più al
 `run_ingestion.py` indicizza un'intera cartella con la stessa pipeline dell'API:
 
 ```bash
-python run_ingestion.py                 # indicizza synthetic_data/
-python run_ingestion.py --dir docs --force
+python run_ingestion.py                 # indicizza data/documents/
+python run_ingestion.py --force         # re-indicizza anche i documenti presenti
+python run_ingestion.py --reset         # svuota la collezione Qdrant e re-indicizza
+python run_ingestion.py --dir docs      # cartella personalizzata
 ```
 
-## Auto-ingest di synthetic_data
+## Auto-ingest di data/documents
 
 All'avvio, `diagnosis-api` lancia in background l'ingestione automatica di tutti
-i documenti contenuti in `synthetic_data/` (PDF, immagini o testo): estrazione
+i documenti contenuti in `data/documents/` (PDF, immagini o testo): estrazione
 pagine, conversione in JPEG, OCR con LightOnOCR-2, paragrafi, chunk e
 embeddings in Qdrant. L'ingestione parte appena i modelli Ollama sono caricati e
 procede in parallelo alle richieste API; i documenti già indicizzati (doc_id
 deterministico dal filename) vengono saltati ai riavvii successivi.
 
+> I due manuali occupano ~716 pagine: la prima ingestione con OCR è lunga (decine
+> di minuti). Per ripartire da zero e rimuovere i vecchi documenti sintetici,
+> svuota la collezione e re-ingestisci da terminale:
+>
+> ```bash
+> sudo docker compose exec diagnosis-api python run_ingestion.py --reset
+> ```
+
 ## Pipeline di diagnosi (LangGraph)
 
 ```
-collect_description -> ask_gcs (3 domande: E/V/M) -> build_rag_query
-   -> retrieve_documents (2 livelli: riassunti -> chunk, poi rerank LLM)
+assess_case (triage: categoria + serve la GCS?) -> translate_case (caso -> inglese)
+   -> [se serve la GCS: 3 domande E/V/M, altrimenti 2-3 domande mirate di categoria]
+   -> build_rag_query (query in inglese) -> retrieve_documents (2 livelli: riassunti
+      -> chunk, poi rerank LLM)
    -> generate_diagnosis (5 ipotesi) -> evaluate_candidates (LLM-as-Judge, 4 criteri)
    -> confidenza < soglia: generate_followup_question -> risposta utente
       -> build_rag_query ... (nuovo ciclo)
    -> confidenza >= soglia / stop utente / max cicli: END
 ```
+
+Il nodo di **triage** classifica il caso in una categoria clinica e decide se
+applicare la Glasgow Coma Scale (sempre obbligatoria per la categoria
+neurologica). Se la GCS non serve, vengono poste 2-3 domande mirate specifiche
+per la categoria. Il nodo di **traduzione** porta la descrizione del caso e le
+risposte in inglese, così la query RAG combacia con i manuali in inglese; tutte
+le risposte mostrate all'utente restano in italiano.
 
 Il nodo di generazione produce **cinque ipotesi diagnostiche** differenziate, ognuna
 con nome della condizione, confidenza, motivazione basata sui documenti ed esami
@@ -155,6 +197,12 @@ embedding_model = "nomic-embed-text"
 llm_model = "gemma3:1b"
 ocr_model = "maternion/LightOnOCR-2:1b"
 
+# documenti
+documents_dir = "data/documents"
+pdf_prefer_text_layer = false
+min_paragraph_chars = 250
+max_paragraph_chars = 1800
+
 # retrieval
 top_k_documents = 5
 context_top_k = 5
@@ -163,6 +211,10 @@ context_top_k = 5
 candidate_count = 5
 confidence_threshold = 0.7
 max_followup_rounds = 4
+
+# triage e lingua
+auto_gcs_triage = true
+translate_input_to_english = true
 ```
 
 - Il servizio `ollama-setup` legge lo stesso file (`scripts/pull_models.py`) e
@@ -188,12 +240,15 @@ sudo docker compose logs -f ollama-setup   # monitora il pull dei modelli
 
 Dopo l'avvio dello stack, la GUI è su **http://localhost:8501**:
 
-- sezione **Diagnosi**: interfaccia a chat. Nuova sessione → descrivi il problema → 3
-  domande GCS (pulsanti di risposta) → esecuzione diagnosi. Se la confidenza non basta,
+- sezione **Diagnosi**: interfaccia a chat. Nuova sessione → descrivi il problema →
+  il sistema mostra la categoria riconosciuta e decide da solo se servono le 3 domande
+  GCS oppure 2-3 domande mirate di categoria (pulsanti di risposta) → esecuzione
+  diagnosi. Se la confidenza non basta,
   il sistema prosegue con domande semplici e osservabili con risposte rapide
   selezionabili: rispondi finché vuoi, oppure premi **Sono soddisfatto · ferma la diagnosi**
   per chiudere quando preferisci. Ogni ciclo riformula le ipotesi e aggiorna la confidenza;
-  il report mostra GCS, gravità, confidenza, le **cinque ipotesi diagnostiche a confronto**
+  il report mostra la categoria, la GCS e la gravità (solo se applicabile), la confidenza,
+  le **cinque ipotesi diagnostiche a confronto**
   (la migliore in evidenza con badge **Migliore**, le altre come **Candidato N**, ognuna con
   confidenza, motivazione, esami consigliati e la griglia di valutazione LLM-as-Judge su
   pertinenza, supporto documenti, completezza e sicurezza clinica) e le fonti consultate.
@@ -213,7 +268,7 @@ si riflettono con un refresh della pagina).
 |---|---|
 | `POST /api/v1/diagnosis/start` | avvia sessione |
 | `POST /api/v1/diagnosis/{id}/description` | descrizione problema |
-| `POST /api/v1/diagnosis/{id}/answer` | risposta domanda GCS (1..6) |
+| `POST /api/v1/diagnosis/{id}/answer` | risposta a domanda GCS o di categoria (1..6) |
 | `POST /api/v1/diagnosis/{id}/diagnose` | esegue RAG + diagnosi |
 | `POST /api/v1/diagnosis/{id}/followup` | risposta a domanda di approfondimento |
 | `POST /api/v1/diagnosis/{id}/stop` | ferma l'approfondimento e consolida |

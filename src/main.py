@@ -7,7 +7,7 @@ import structlog
 
 from src.api.router import router
 from src.core.config import get_settings
-from src.application.startup_ingest import ingest_synthetic_data
+from src.application.startup_ingest import ingest_documents
 
 structlog.configure(
     processors=[
@@ -22,7 +22,7 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     structlog.get_logger().info("system_startup", qdrant_url=settings.qdrant_url)
-    ingest_task = asyncio.create_task(ingest_synthetic_data())
+    ingest_task = asyncio.create_task(ingest_documents())
     app.state.ingest_task = ingest_task
     try:
         yield
@@ -32,8 +32,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="GCS RAG Diagnosis System",
-    description="Sistema di diagnosi RAG basato su questionario Glasgow Coma Scale",
+    title="SIAMO Maritime Medical Diagnosis System",
+    description="Sistema di diagnosi medica di bordo basato su RAG",
     version="1.0.0",
     lifespan=lifespan,
 )

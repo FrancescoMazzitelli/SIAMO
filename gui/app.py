@@ -1,4 +1,4 @@
-"""Streamlit GUI for the SIAMO system (RAG diagnosis with the Glasgow Coma Scale).
+"""Streamlit GUI for the SIAMO maritime medical diagnosis system.
 
 Chat-style interface over the diagnosis-api REST endpoints (docker container).
 The user-facing text of this app is Italian by design.
@@ -247,7 +247,11 @@ def _init_state():
     st.session_state.setdefault("session_id", None)
     st.session_state.setdefault("next_question", None)
     st.session_state.setdefault("question_index", 0)
-    st.session_state.setdefault("gcs_complete", False)
+    st.session_state.setdefault("answers_complete", False)
+    st.session_state.setdefault("requires_gcs", False)
+    st.session_state.setdefault("category", "")
+    st.session_state.setdefault("category_key", "")
+    st.session_state.setdefault("triage_reasoning", "")
     st.session_state.setdefault("description_sent", False)
     st.session_state.setdefault("problem_description", "")
     st.session_state.setdefault("result", None)
@@ -261,7 +265,11 @@ def _reset_flow():
     st.session_state["session_id"] = None
     st.session_state["next_question"] = None
     st.session_state["question_index"] = 0
-    st.session_state["gcs_complete"] = False
+    st.session_state["answers_complete"] = False
+    st.session_state["requires_gcs"] = False
+    st.session_state["category"] = ""
+    st.session_state["category_key"] = ""
+    st.session_state["triage_reasoning"] = ""
     st.session_state["description_sent"] = False
     st.session_state["result"] = None
     st.session_state["problem_description"] = ""
@@ -302,7 +310,11 @@ def start_session():
     st.session_state["session_id"] = data.get("session_id")
     st.session_state["next_question"] = None
     st.session_state["question_index"] = 0
-    st.session_state["gcs_complete"] = False
+    st.session_state["answers_complete"] = False
+    st.session_state["requires_gcs"] = False
+    st.session_state["category"] = ""
+    st.session_state["category_key"] = ""
+    st.session_state["triage_reasoning"] = ""
     st.session_state["description_sent"] = False
     st.session_state["result"] = None
     st.session_state["problem_description"] = ""
@@ -325,7 +337,7 @@ def _ensure_session():
 def _flow_state() -> str:
     if not st.session_state["description_sent"]:
         return "description"
-    if not st.session_state["gcs_complete"]:
+    if not st.session_state["answers_complete"]:
         return "gcs"
     if st.session_state["result"] is None:
         return "diagnose"
@@ -334,10 +346,14 @@ def _flow_state() -> str:
     return "complete"
 
 
+def _stage_label() -> str:
+    return "Questionario GCS" if st.session_state.get("requires_gcs") else "Domande mirate"
+
+
 def _phase_label() -> str:
     return {
         "description": "Descrizione",
-        "gcs": "Questionario GCS",
+        "gcs": _stage_label(),
         "diagnose": "Pronta per la diagnosi",
         "followup": "Approfondimento",
         "complete": "Completata",
@@ -380,12 +396,27 @@ def _handle_description(text: str):
     _add_message("user", text)
     st.session_state["problem_description"] = text
     st.session_state["description_sent"] = True
+    st.session_state["requires_gcs"] = bool(data.get("requires_gcs"))
+    st.session_state["category"] = data.get("category", "")
+    st.session_state["category_key"] = data.get("category_key", "")
+    st.session_state["triage_reasoning"] = data.get("triage_reasoning", "")
     st.session_state["next_question"] = data
     st.session_state["question_index"] = 1
+
+    category = data.get("category") or "Altro"
+    reasoning = (data.get("triage_reasoning") or "").strip()
+    if data.get("requires_gcs"):
+        intro = f"Categoria rilevata: {category}. Questo caso richiede la Glasgow Coma Scale."
+    else:
+        intro = (f"Categoria rilevata: {category}. Non serve la Glasgow Coma Scale: "
+                 "ti faccio qualche domanda mirata.")
+    if reasoning:
+        intro = f"{intro} {reasoning}"
+    _add_message("assistant", intro, kind="text", meta={})
     _add_message(
         "assistant",
         data.get("question", ""),
-        kind="gcs_question",
+        kind="question",
         meta={"options": data.get("options", {})},
     )
     st.rerun()
@@ -402,11 +433,15 @@ def _handle_answer(value: int):
 
     _add_message("user", label)
     if data.get("is_complete"):
-        st.session_state["gcs_complete"] = True
+        st.session_state["answers_complete"] = True
         st.session_state["next_question"] = None
+        if st.session_state.get("requires_gcs"):
+            done_text = "Questionario Glasgow completato. Premi Esegui diagnosi per la valutazione."
+        else:
+            done_text = "Domande completate. Premi Esegui diagnosi per la valutazione."
         _add_message(
             "assistant",
-            "Questionario Glasgow completato. Premi Esegui diagnosi per la valutazione.",
+            done_text,
             kind="text",
             meta={},
         )
@@ -416,7 +451,7 @@ def _handle_answer(value: int):
         _add_message(
             "assistant",
             data.get("question", ""),
-            kind="gcs_question",
+            kind="question",
             meta={"options": data.get("options", {})},
         )
     st.rerun()
@@ -493,7 +528,7 @@ def _steps_html() -> str:
     result = st.session_state["result"]
     steps = [
         ("1", "Descrizione", st.session_state["description_sent"]),
-        ("2", "Questionario GCS", st.session_state["gcs_complete"]),
+        ("2", _stage_label(), st.session_state["answers_complete"]),
         ("3", "Diagnosi", result is not None),
         ("4", "Approfondimento", bool(result) and not result.get("needs_followup")),
     ]
@@ -632,22 +667,41 @@ def _render_report(result: dict):
 
     with st.container(border=True):
         st.markdown('<div class="report-title">Report diagnostico</div>', unsafe_allow_html=True)
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            metric_card("GCS totale", f"{result.get('gcs_total', 0)}/15", sub="punteggio Glasgow")
-        with c2:
-            severity = result.get("gcs_severity", "unknown")
-            metric_card("Gravità", severity, badge=severity)
-        with c3:
-            fill = (
-                f'<div class="conf-track"><div class="conf-fill" '
-                f'style="width:{confidence * 100:.1f}%;background:{color}"></div></div>'
-            )
-            st.markdown(
-                f'<div class="metric-card"><div class="label">Confidenza</div>'
-                f'<div class="value" style="color:{color}">{confidence:.0%}</div>{fill}</div>',
-                unsafe_allow_html=True,
-            )
+        category = result.get("category") or ""
+        if category:
+            st.caption(f"Categoria: {category}")
+        uses_gcs = bool(result.get("requires_gcs")) or int(result.get("gcs_total", 0) or 0) > 0
+        if uses_gcs:
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                metric_card("GCS totale", f"{result.get('gcs_total', 0)}/15", sub="punteggio Glasgow")
+            with c2:
+                severity = result.get("gcs_severity", "unknown")
+                metric_card("Gravità", severity, badge=severity)
+            with c3:
+                fill = (
+                    f'<div class="conf-track"><div class="conf-fill" '
+                    f'style="width:{confidence * 100:.1f}%;background:{color}"></div></div>'
+                )
+                st.markdown(
+                    f'<div class="metric-card"><div class="label">Confidenza</div>'
+                    f'<div class="value" style="color:{color}">{confidence:.0%}</div>{fill}</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            c1, c2 = st.columns(2)
+            with c1:
+                metric_card("Categoria", category or "Altro")
+            with c2:
+                fill = (
+                    f'<div class="conf-track"><div class="conf-fill" '
+                    f'style="width:{confidence * 100:.1f}%;background:{color}"></div></div>'
+                )
+                st.markdown(
+                    f'<div class="metric-card"><div class="label">Confidenza</div>'
+                    f'<div class="value" style="color:{color}">{confidence:.0%}</div>{fill}</div>',
+                    unsafe_allow_html=True,
+                )
         st.caption(
             f"Ciclo di approfondimento {round_no} di {max_rounds} · soglia di confidenza {threshold:.0%}"
         )
@@ -711,7 +765,7 @@ def render_chat():
         _render_message(msg)
 
 
-def _render_gcs_options():
+def _render_question_options():
     question = st.session_state["next_question"] or {}
     options = question.get("options") or {}
     st.caption(
@@ -721,7 +775,7 @@ def _render_gcs_options():
     for key, label in options.items():
         if st.button(
             label,
-            key=f"gcs_{question.get('current_step')}_{key}",
+            key=f"q_{question.get('current_step')}_{key}",
             use_container_width=True,
         ):
             _handle_answer(int(key))
@@ -734,7 +788,7 @@ def _render_controls():
         if prompt:
             _handle_description(prompt.strip())
     elif state == "gcs":
-        _render_gcs_options()
+        _render_question_options()
     elif state == "diagnose":
         loader = st.empty()
         if st.button("Esegui diagnosi", type="primary", use_container_width=True, key="btn_diagnose"):
@@ -786,14 +840,17 @@ def _render_controls():
 def render_sidebar() -> str:
     with st.sidebar:
         st.markdown('<div class="side-brand">SIAMO</div>', unsafe_allow_html=True)
-        st.caption("Diagnosi medica assistita da RAG e Glasgow Coma Scale")
+        st.caption("Diagnosi medica di bordo assistita da RAG")
         view = st.radio("Sezione", ["Diagnosi", "Documenti"], key="view")
         st.divider()
         st.markdown("**Stato sessione**")
         sid = st.session_state["session_id"]
+        category = st.session_state.get("category") or ""
         st.markdown(
             f'<div class="side-session">ID: {html.escape(sid[:10] + "..." if sid else "nessuna")}<br>'
-            f"Fase: {html.escape(_phase_label())}</div>",
+            f"Fase: {html.escape(_phase_label())}"
+            + (f"<br>Categoria: {html.escape(category)}" if category else "")
+            + "</div>",
             unsafe_allow_html=True,
         )
         if st.button("Nuova sessione", key="sb_new", use_container_width=True):
@@ -816,9 +873,10 @@ def render_diagnosi():
     _ensure_session()
     st.markdown(
         '<div class="app-header"><h1>SIAMO · Sistema di Diagnosi Medica</h1>'
-        "<p>Descrivi il caso e rispondi al questionario Glasgow Coma Scale. Se la confidenza "
-        "non è sufficiente, ti faccio qualche domanda semplice da verificare subito sul "
-        "paziente, finché la diagnosi è solida oppure decidi tu di fermarti.</p></div>",
+        "<p>Descrivi il caso del paziente. Il sistema riconosce la categoria del problema "
+        "e decide da solo se serve la Glasgow Coma Scale o qualche domanda mirata. Se la "
+        "confidenza non è sufficiente, ti faccio altre domande semplici da verificare subito "
+        "sul paziente, finché la diagnosi è solida oppure decidi tu di fermarti.</p></div>",
         unsafe_allow_html=True,
     )
     st.markdown(_steps_html(), unsafe_allow_html=True)
@@ -830,7 +888,8 @@ def render_documenti():
     st.markdown(
         '<div class="app-header"><h1>SIAMO · Gestione Documenti</h1>'
         "<p>Indicizza PDF, immagini o testi: ogni documento viene convertito, "
-        "sottoposto a OCR e indicizzato per la ricerca RAG.</p></div>",
+        "letto con OCR e indicizzato per la ricerca RAG. I manuali di soccorso in "
+        "inglese in data/documents vengono indicizzati automaticamente all'avvio.</p></div>",
         unsafe_allow_html=True,
     )
     c1, c2 = st.columns(2)
